@@ -5,6 +5,10 @@ Object.defineProperty(exports, "__esModule", {
 });
 exports.MultiMap = void 0;
 
+let _Symbol$iterator;
+
+_Symbol$iterator = Symbol.iterator;
+
 /**
  * Copyright (c) Microsoft Corporation.
  *
@@ -46,6 +50,17 @@ class MultiMap {
     return this._map.has(key);
   }
 
+  delete(key, value) {
+    const values = this._map.get(key);
+
+    if (!values) return;
+    if (values.includes(value)) this._map.set(key, values.filter(v => value !== v));
+  }
+
+  deleteAll(key) {
+    this._map.delete(key);
+  }
+
   hasValue(key, value) {
     const values = this._map.get(key);
 
@@ -55,6 +70,10 @@ class MultiMap {
 
   get size() {
     return this._map.size;
+  }
+
+  [_Symbol$iterator]() {
+    return this._map[Symbol.iterator]();
   }
 
   keys() {

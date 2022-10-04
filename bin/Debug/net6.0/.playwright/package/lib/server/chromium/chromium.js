@@ -3,7 +3,7 @@
 Object.defineProperty(exports, "__esModule", {
   value: true
 });
-exports.Chromium = void 0;
+exports.DEFAULT_ARGS = exports.Chromium = void 0;
 
 var _fs = _interopRequireDefault(require("fs"));
 
@@ -50,6 +50,8 @@ var _https = _interopRequireDefault(require("https"));
 var _registry = require("../registry");
 
 var _manualPromise = require("../../utils/manualPromise");
+
+var _browserContext = require("../browserContext");
 
 function _interopRequireDefault(obj) { return obj && obj.__esModule ? obj : { default: obj }; }
 
@@ -115,13 +117,14 @@ class Chromium extends _browserType.BrowserType {
       close: doClose,
       kill: doClose
     };
+    const persistent = {
+      noDefaultViewport: true
+    };
     const browserOptions = { ...this._playwrightOptions,
       slowMo: options.slowMo,
       name: 'chromium',
       isChromium: true,
-      persistent: {
-        noDefaultViewport: true
-      },
+      persistent,
       browserProcess,
       protocolLogger: _helper.helper.debugProtocolLogger(),
       browserLogsCollector: new _debugLogger.RecentLogsCollector(),
@@ -135,8 +138,10 @@ class Chromium extends _browserType.BrowserType {
       // does not work at all with proxies on Windows.
       proxy: {
         server: 'per-context'
-      }
+      },
+      originalLaunchOptions: {}
     };
+    (0, _browserContext.validateBrowserContextOptions)(persistent, browserOptions);
     progress.throwIfAborted();
     const browser = await _crBrowser.CRBrowser.connect(chromeTransport, browserOptions);
     browser.on(_browser.Browser.Events.Disconnected, doCleanup);
@@ -342,9 +347,12 @@ class Chromium extends _browserType.BrowserType {
 
 exports.Chromium = Chromium;
 const DEFAULT_ARGS = ['--disable-field-trial-config', // https://source.chromium.org/chromium/chromium/src/+/main:testing/variations/README.md
-'--disable-background-networking', '--enable-features=NetworkService,NetworkServiceInProcess', '--disable-background-timer-throttling', '--disable-backgrounding-occluded-windows', '--disable-breakpad', '--disable-client-side-phishing-detection', '--disable-component-extensions-with-background-pages', '--disable-default-apps', '--disable-dev-shm-usage', '--disable-extensions', // AvoidUnnecessaryBeforeUnloadCheckSync - https://github.com/microsoft/playwright/issues/14047
-'--disable-features=ImprovedCookieControls,LazyFrameLoading,GlobalMediaControls,DestroyProfileOnBrowserClose,MediaRouter,DialMediaRouteProvider,AcceptCHFrame,AutoExpandDetailsElement,CertificateTransparencyComponentUpdater,AvoidUnnecessaryBeforeUnloadCheckSync', '--allow-pre-commit-input', '--disable-hang-monitor', '--disable-ipc-flooding-protection', '--disable-popup-blocking', '--disable-prompt-on-repost', '--disable-renderer-backgrounding', '--disable-sync', '--force-color-profile=srgb', '--metrics-recording-only', '--no-first-run', '--enable-automation', '--password-store=basic', '--use-mock-keychain', // See https://chromium-review.googlesource.com/c/chromium/src/+/2436773
+'--disable-background-networking', '--enable-features=NetworkService,NetworkServiceInProcess', '--disable-background-timer-throttling', '--disable-backgrounding-occluded-windows', '--disable-back-forward-cache', // Avoids surprises like main request not being intercepted during page.goBack().
+'--disable-breakpad', '--disable-client-side-phishing-detection', '--disable-component-extensions-with-background-pages', '--disable-default-apps', '--disable-dev-shm-usage', '--disable-extensions', // AvoidUnnecessaryBeforeUnloadCheckSync - https://github.com/microsoft/playwright/issues/14047
+// Translate - https://github.com/microsoft/playwright/issues/16126
+'--disable-features=ImprovedCookieControls,LazyFrameLoading,GlobalMediaControls,DestroyProfileOnBrowserClose,MediaRouter,DialMediaRouteProvider,AcceptCHFrame,AutoExpandDetailsElement,CertificateTransparencyComponentUpdater,AvoidUnnecessaryBeforeUnloadCheckSync,Translate', '--allow-pre-commit-input', '--disable-hang-monitor', '--disable-ipc-flooding-protection', '--disable-popup-blocking', '--disable-prompt-on-repost', '--disable-renderer-backgrounding', '--disable-sync', '--force-color-profile=srgb', '--metrics-recording-only', '--no-first-run', '--enable-automation', '--password-store=basic', '--use-mock-keychain', // See https://chromium-review.googlesource.com/c/chromium/src/+/2436773
 '--no-service-autorun', '--export-tagged-pdf'];
+exports.DEFAULT_ARGS = DEFAULT_ARGS;
 
 async function urlToWSEndpoint(progress, endpointURL) {
   if (endpointURL.startsWith('ws')) return endpointURL;
@@ -352,7 +360,9 @@ async function urlToWSEndpoint(progress, endpointURL) {
   const httpURL = endpointURL.endsWith('/') ? `${endpointURL}json/version/` : `${endpointURL}/json/version/`;
   const request = endpointURL.startsWith('https') ? _https.default : _http.default;
   const json = await new Promise((resolve, reject) => {
-    request.get(httpURL, resp => {
+    request.get(httpURL, {
+      timeout: _netUtils.NET_DEFAULT_TIMEOUT
+    }, resp => {
       if (resp.statusCode < 200 || resp.statusCode >= 400) {
         reject(new Error(`Unexpected status ${resp.statusCode} when connecting to ${httpURL}.\n` + `This does not look like a DevTools server, try connecting via ws://.`));
       }

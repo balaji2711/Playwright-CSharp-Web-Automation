@@ -4,7 +4,6 @@ Object.defineProperty(exports, "__esModule", {
   value: true
 });
 exports.ChannelOwner = void 0;
-exports.renderCallWithParams = renderCallWithParams;
 
 var _events = require("events");
 
@@ -66,6 +65,14 @@ class ChannelOwner extends _events.EventEmitter {
     this._initializer = initializer;
   }
 
+  _adopt(child) {
+    child._parent._objects.delete(child._guid);
+
+    this._objects.set(child._guid, child);
+
+    child._parent = this;
+  }
+
   _dispose() {
     // Clean up from parent and connection.
     if (this._parent) this._parent._objects.delete(this._guid);
@@ -88,10 +95,8 @@ class ChannelOwner extends _events.EventEmitter {
   _createChannel(base) {
     const channel = new Proxy(base, {
       get: (obj, prop) => {
-        if (prop === 'debugScopeState') return params => this._connection.sendMessageToServer(this, prop, params, null);
-
         if (typeof prop === 'string') {
-          const validator = scheme[paramsName(this._type, prop)];
+          const validator = (0, _validator.maybeFindValidator)(this._type, prop, 'Params');
 
           if (validator) {
             return params => {
@@ -107,7 +112,10 @@ class ChannelOwner extends _events.EventEmitter {
                 } : apiZone;
                 apiZone.reported = true;
                 if (csi && stackTrace && stackTrace.apiName) csi.onApiCallBegin(renderCallWithParams(stackTrace.apiName, params), stackTrace, callCookie);
-                return this._connection.sendMessageToServer(this, prop, validator(params, ''), stackTrace);
+                return this._connection.sendMessageToServer(this, this._type, prop, validator(params, '', {
+                  tChannelImpl: tChannelImplToWire,
+                  binary: this._connection.isRemote() ? 'toBase64' : 'buffer'
+                }), stackTrace);
               });
             };
           }
@@ -191,10 +199,6 @@ function logApiCall(logger, message, isNested) {
   _debugLogger.debugLogger.log('api', message);
 }
 
-function paramsName(type, method) {
-  return type + method[0].toUpperCase() + method.substring(1) + 'Params';
-}
-
 const paramsToRender = ['url', 'selector', 'text', 'key'];
 
 function renderCallWithParams(apiName, params) {
@@ -210,13 +214,9 @@ function renderCallWithParams(apiName, params) {
   return apiName + paramsText;
 }
 
-const tChannel = name => {
-  return (arg, path) => {
-    if (arg._object instanceof ChannelOwner && (name === '*' || arg._object._type === name)) return {
-      guid: arg._object._guid
-    };
-    throw new _validator.ValidationError(`${path}: expected ${name}`);
+function tChannelImplToWire(names, arg, path, context) {
+  if (arg._object instanceof ChannelOwner && (names === '*' || names.includes(arg._object._type))) return {
+    guid: arg._object._guid
   };
-};
-
-const scheme = (0, _validator.createScheme)(tChannel);
+  throw new _validator.ValidationError(`${path}: expected channel ${names.toString()}`);
+}

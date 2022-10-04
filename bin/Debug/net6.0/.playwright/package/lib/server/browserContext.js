@@ -21,7 +21,7 @@ var _helper = require("./helper");
 
 var network = _interopRequireWildcard(require("./network"));
 
-var _page = require("./page");
+var _page4 = require("./page");
 
 var _path = _interopRequireDefault(require("path"));
 
@@ -80,13 +80,14 @@ class BrowserContext extends _instrumentation.SdkObject {
     this._browserContextId = void 0;
     this._selectors = void 0;
     this._origins = new Set();
-    this._harRecorder = void 0;
+    this._harRecorders = new Map();
     this.tracing = void 0;
     this.fetchRequest = void 0;
     this._customCloseHandler = void 0;
     this._tempDirs = [];
     this._settingStorageState = false;
     this.initScripts = [];
+    this._routesInFlight = new Set();
     this.attribution.context = this;
     this._browser = browser;
     this._options = options;
@@ -94,9 +95,7 @@ class BrowserContext extends _instrumentation.SdkObject {
     this._isPersistentContext = !browserContextId;
     this._closePromise = new Promise(fulfill => this._closePromiseFulfill = fulfill);
     this.fetchRequest = new _fetch.BrowserContextAPIRequestContext(this);
-    if (this._options.recordHar) this._harRecorder = new _harRecorder.HarRecorder(this, { ...this._options.recordHar,
-      path: _path.default.join(this._browser.options.artifactsDir, `${(0, _utils.createGuid)()}.har`)
-    });
+    if (this._options.recordHar) this._harRecorders.set('', new _harRecorder.HarRecorder(this, null, this._options.recordHar));
     this.tracing = new _tracing.Tracing(this, browser.options.tracesDir);
   }
 
@@ -106,6 +105,8 @@ class BrowserContext extends _instrumentation.SdkObject {
 
   setSelectors(selectors) {
     this._selectors = selectors;
+
+    for (const page of this.pages()) page.selectors = selectors;
   }
 
   selectors() {
@@ -126,10 +127,72 @@ class BrowserContext extends _instrumentation.SdkObject {
       _recorder.Recorder.showInspector(this);
     });
     if ((0, _utils.debugMode)() === 'console') await this.extendInjectedScript(consoleApiSource.source);
+    if (this._options.serviceWorkers === 'block') await this.addInitScript(`\nnavigator.serviceWorker.register = () => { console.warn('Service Worker registration blocked by Playwright'); };\n`);
+    if (this._options.permissions) await this.grantPermissions(this._options.permissions);
   }
 
   async _ensureVideosPath() {
     if (this._options.recordVideo) await (0, _fileUtils.mkdirIfNeeded)(_path.default.join(this._options.recordVideo.dir, 'dummy'));
+  }
+
+  canResetForReuse() {
+    if (this._closedStatus !== 'open') return false;
+    return true;
+  }
+
+  static reusableContextHash(params) {
+    const paramsCopy = { ...params
+    };
+
+    for (const k of Object.keys(paramsCopy)) {
+      const key = k;
+      if (paramsCopy[key] === defaultNewContextParamValues[key]) delete paramsCopy[key];
+    }
+
+    for (const key of paramsThatAllowContextReuse) delete paramsCopy[key];
+
+    return JSON.stringify(paramsCopy);
+  }
+
+  async resetForReuse(metadata, params) {
+    var _page, _page2, _page3;
+
+    this.setDefaultNavigationTimeout(undefined);
+    this.setDefaultTimeout(undefined);
+
+    if (params) {
+      for (const key of paramsThatAllowContextReuse) this._options[key] = params[key];
+    }
+
+    await this._cancelAllRoutesInFlight(); // Close extra pages early.
+
+    let page = this.pages()[0];
+    const [, ...otherPages] = this.pages();
+
+    for (const p of otherPages) await p.close(metadata);
+
+    if (page && page._crashedPromise.isDone()) {
+      await page.close(metadata);
+      page = undefined;
+    } // Unless I do this early, setting extra http headers below does not respond.
+
+
+    await ((_page = page) === null || _page === void 0 ? void 0 : _page._frameManager.closeOpenDialogs()); // Navigate to about:blank first to ensure no page scripts are running after this point.
+
+    await ((_page2 = page) === null || _page2 === void 0 ? void 0 : _page2.mainFrame().goto(metadata, 'about:blank', {
+      timeout: 0
+    }));
+    await this._resetStorage();
+    await this._removeExposedBindings();
+    await this._removeInitScripts(); // TODO: following can be optimized to not perform noops.
+
+    if (this._options.permissions) await this.grantPermissions(this._options.permissions);else await this.clearPermissions();
+    await this.setExtraHTTPHeaders(this._options.extraHTTPHeaders || []);
+    await this.setGeolocation(this._options.geolocation);
+    await this.setOffline(!!this._options.offline);
+    await this.setUserAgent(this._options.userAgent);
+    await this._resetCookies();
+    await ((_page3 = page) === null || _page3 === void 0 ? void 0 : _page3.resetForReuse(metadata));
   }
 
   _browserClosed() {
@@ -151,7 +214,7 @@ class BrowserContext extends _instrumentation.SdkObject {
 
     this._downloads.clear();
 
-    this.tracing.dispose();
+    this.tracing.dispose().catch(() => {});
     if (this._isPersistentContext) this.onClosePersistent();
 
     this._closePromiseFulfill(new Error('Context closed'));
@@ -176,14 +239,14 @@ class BrowserContext extends _instrumentation.SdkObject {
       if (page.getBinding(name)) throw new Error(`Function "${name}" has been already registered in one of the pages`);
     }
 
-    const binding = new _page.PageBinding(name, playwrightBinding, needsHandle);
+    const binding = new _page4.PageBinding(name, playwrightBinding, needsHandle);
 
     this._pageBindings.set(name, binding);
 
     await this.doExposeBinding(binding);
   }
 
-  async removeExposedBindings() {
+  async _removeExposedBindings() {
     for (const key of this._pageBindings.keys()) {
       if (!key.startsWith('__pw')) this._pageBindings.delete(key);
     }
@@ -239,8 +302,9 @@ class BrowserContext extends _instrumentation.SdkObject {
 
   async _loadDefaultContext(progress) {
     const pages = await this._loadDefaultContextAsIs(progress);
+    const browserName = this._browser.options.name;
 
-    if (this._options.isMobile || this._options.locale) {
+    if (this._options.isMobile && browserName === 'chromium' || this._options.locale && browserName === 'webkit') {
       // Workaround for:
       // - chromium fails to change isMobile for existing page;
       // - webkit fails to change locale for existing page.
@@ -288,7 +352,7 @@ class BrowserContext extends _instrumentation.SdkObject {
     await this.doAddInitScript(script);
   }
 
-  async removeInitScripts() {
+  async _removeInitScripts() {
     this.initScripts.splice(0, this.initScripts.length);
     await this.doRemoveInitScripts();
   }
@@ -316,12 +380,12 @@ class BrowserContext extends _instrumentation.SdkObject {
 
   async close(metadata) {
     if (this._closedStatus === 'open') {
-      var _this$_harRecorder;
-
       this.emit(BrowserContext.Events.BeforeClose);
       this._closedStatus = 'closing';
-      await ((_this$_harRecorder = this._harRecorder) === null || _this$_harRecorder === void 0 ? void 0 : _this$_harRecorder.flush());
-      await this.tracing.flush(); // Cleanup.
+
+      for (const harRecorder of this._harRecorders.values()) await harRecorder.flush();
+
+      await this.tracing.dispose(); // Cleanup.
 
       const promises = [];
 
@@ -365,7 +429,7 @@ class BrowserContext extends _instrumentation.SdkObject {
     if (metadata.isServerSide) pageDelegate.potentiallyUninitializedPage().markAsServerSideOnly();
     const pageOrError = await pageDelegate.pageOrError();
 
-    if (pageOrError instanceof _page.Page) {
+    if (pageOrError instanceof _page4.Page) {
       if (pageOrError.isClosed()) throw new Error('Page has been closed.');
       return pageOrError;
     }
@@ -412,6 +476,38 @@ class BrowserContext extends _instrumentation.SdkObject {
     return result;
   }
 
+  async _resetStorage() {
+    var _this$_options$storag, _this$_options$storag2;
+
+    const oldOrigins = this._origins;
+    const newOrigins = new Map(((_this$_options$storag = this._options.storageState) === null || _this$_options$storag === void 0 ? void 0 : (_this$_options$storag2 = _this$_options$storag.origins) === null || _this$_options$storag2 === void 0 ? void 0 : _this$_options$storag2.map(p => [p.origin, p])) || []);
+    if (!oldOrigins.size && !newOrigins.size) return;
+    let page = this.pages()[0];
+    const internalMetadata = (0, _instrumentation.serverSideCallMetadata)();
+    page = page || (await this.newPage(internalMetadata));
+    await page._setServerRequestInterceptor(handler => {
+      handler.fulfill({
+        body: '<html></html>'
+      }).catch(() => {});
+    });
+
+    for (const origin of new Set([...oldOrigins, ...newOrigins.keys()])) {
+      const frame = page.mainFrame();
+      await frame.goto(internalMetadata, origin);
+      await frame.resetStorageForCurrentOriginBestEffort(newOrigins.get(origin));
+    }
+
+    await page._setServerRequestInterceptor(undefined);
+    this._origins = new Set([...newOrigins.keys()]); // It is safe to not restore the URL to about:blank since we are doing it in Page::resetForReuse.
+  }
+
+  async _resetCookies() {
+    var _this$_options$storag3, _this$_options$storag4;
+
+    await this.clearCookies();
+    if ((_this$_options$storag3 = this._options.storageState) !== null && _this$_options$storag3 !== void 0 && _this$_options$storag3.cookies) await this.addCookies((_this$_options$storag4 = this._options.storageState) === null || _this$_options$storag4 === void 0 ? void 0 : _this$_options$storag4.cookies);
+  }
+
   isSettingStorageState() {
     return this._settingStorageState;
   }
@@ -452,12 +548,40 @@ class BrowserContext extends _instrumentation.SdkObject {
     const installInFrame = frame => frame.extendInjectedScript(source, arg).catch(() => {});
 
     const installInPage = page => {
-      page.on(_page.Page.Events.InternalFrameNavigatedToNewDocument, installInFrame);
+      page.on(_page4.Page.Events.InternalFrameNavigatedToNewDocument, installInFrame);
       return Promise.all(page.frames().map(installInFrame));
     };
 
     this.on(BrowserContext.Events.Page, installInPage);
     return Promise.all(this.pages().map(installInPage));
+  }
+
+  async _harStart(page, options) {
+    const harId = (0, _utils.createGuid)();
+
+    this._harRecorders.set(harId, new _harRecorder.HarRecorder(this, page, options));
+
+    return harId;
+  }
+
+  async _harExport(harId) {
+    const recorder = this._harRecorders.get(harId || '');
+
+    return recorder.export();
+  }
+
+  addRouteInFlight(route) {
+    this._routesInFlight.add(route);
+  }
+
+  removeRouteInFlight(route) {
+    this._routesInFlight.delete(route);
+  }
+
+  async _cancelAllRoutesInFlight() {
+    await Promise.all([...this._routesInFlight].map(r => r.abort())).catch(() => {});
+
+    this._routesInFlight.clear();
   }
 
 }
@@ -559,3 +683,17 @@ function normalizeProxySettings(proxy) {
     bypass
   };
 }
+
+const paramsThatAllowContextReuse = ['colorScheme', 'forcedColors', 'reducedMotion', 'screen', 'userAgent', 'viewport'];
+const defaultNewContextParamValues = {
+  noDefaultViewport: false,
+  ignoreHTTPSErrors: false,
+  javaScriptEnabled: true,
+  bypassCSP: false,
+  offline: false,
+  isMobile: false,
+  hasTouch: false,
+  acceptDownloads: true,
+  strictSelectors: false,
+  serviceWorkers: 'allow'
+};

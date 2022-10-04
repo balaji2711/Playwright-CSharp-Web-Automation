@@ -38,8 +38,10 @@ class Browser extends _instrumentation.SdkObject {
     this._defaultContext = null;
     this._startedClosing = false;
     this._idToVideo = new Map();
+    this._contextForReuse = void 0;
     this.attribution.browser = this;
     this.options = options;
+    this.instrumentation.onBrowserOpen(this);
   }
 
   async newContext(metadata, options) {
@@ -47,6 +49,33 @@ class Browser extends _instrumentation.SdkObject {
     const context = await this.doCreateNewContext(options);
     if (options.storageState) await context.setStorageState(metadata, options.storageState);
     return context;
+  }
+
+  async newContextForReuse(params, metadata) {
+    const hash = _browserContext.BrowserContext.reusableContextHash(params);
+
+    for (const context of this.contexts()) {
+      var _this$_contextForReus;
+
+      if (context !== ((_this$_contextForReus = this._contextForReuse) === null || _this$_contextForReus === void 0 ? void 0 : _this$_contextForReus.context)) await context.close(metadata);
+    }
+
+    if (!this._contextForReuse || hash !== this._contextForReuse.hash || !this._contextForReuse.context.canResetForReuse()) {
+      if (this._contextForReuse) await this._contextForReuse.context.close(metadata);
+      this._contextForReuse = {
+        context: await this.newContext(metadata, params),
+        hash
+      };
+      return {
+        context: this._contextForReuse.context,
+        needsReset: false
+      };
+    }
+
+    return {
+      context: this._contextForReuse.context,
+      needsReset: true
+    };
   }
 
   _downloadCreated(page, uuid, url, suggestedFilename) {
@@ -102,6 +131,7 @@ class Browser extends _instrumentation.SdkObject {
 
     if (this._defaultContext) this._defaultContext._browserClosed();
     this.emit(Browser.Events.Disconnected);
+    this.instrumentation.onBrowserClose(this);
   }
 
   async close() {

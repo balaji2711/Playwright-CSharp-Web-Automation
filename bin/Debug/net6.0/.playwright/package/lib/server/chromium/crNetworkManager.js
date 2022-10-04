@@ -34,9 +34,10 @@ function _interopRequireWildcard(obj, nodeInterop) { if (!nodeInterop && obj && 
  * limitations under the License.
  */
 class CRNetworkManager {
-  constructor(client, page, parentManager) {
+  constructor(client, page, serviceWorker, parentManager) {
     this._client = void 0;
     this._page = void 0;
+    this._serviceWorker = void 0;
     this._parentManager = void 0;
     this._requestIdToRequest = new Map();
     this._requestIdToRequestWillBeSentEvent = new Map();
@@ -49,12 +50,19 @@ class CRNetworkManager {
     this._responseExtraInfoTracker = new ResponseExtraInfoTracker();
     this._client = client;
     this._page = page;
+    this._serviceWorker = serviceWorker;
     this._parentManager = parentManager;
     this._eventListeners = this.instrumentNetworkEvents(client);
   }
 
   instrumentNetworkEvents(session, workerFrame) {
-    return [_eventsHelper.eventsHelper.addEventListener(session, 'Fetch.requestPaused', this._onRequestPaused.bind(this, workerFrame)), _eventsHelper.eventsHelper.addEventListener(session, 'Fetch.authRequired', this._onAuthRequired.bind(this)), _eventsHelper.eventsHelper.addEventListener(session, 'Network.requestWillBeSent', this._onRequestWillBeSent.bind(this, workerFrame)), _eventsHelper.eventsHelper.addEventListener(session, 'Network.requestWillBeSentExtraInfo', this._onRequestWillBeSentExtraInfo.bind(this)), _eventsHelper.eventsHelper.addEventListener(session, 'Network.requestServedFromCache', this._onRequestServedFromCache.bind(this)), _eventsHelper.eventsHelper.addEventListener(session, 'Network.responseReceived', this._onResponseReceived.bind(this)), _eventsHelper.eventsHelper.addEventListener(session, 'Network.responseReceivedExtraInfo', this._onResponseReceivedExtraInfo.bind(this)), _eventsHelper.eventsHelper.addEventListener(session, 'Network.loadingFinished', this._onLoadingFinished.bind(this)), _eventsHelper.eventsHelper.addEventListener(session, 'Network.loadingFailed', this._onLoadingFailed.bind(this, workerFrame)), _eventsHelper.eventsHelper.addEventListener(session, 'Network.webSocketCreated', e => this._page._frameManager.onWebSocketCreated(e.requestId, e.url)), _eventsHelper.eventsHelper.addEventListener(session, 'Network.webSocketWillSendHandshakeRequest', e => this._page._frameManager.onWebSocketRequest(e.requestId)), _eventsHelper.eventsHelper.addEventListener(session, 'Network.webSocketHandshakeResponseReceived', e => this._page._frameManager.onWebSocketResponse(e.requestId, e.response.status, e.response.statusText)), _eventsHelper.eventsHelper.addEventListener(session, 'Network.webSocketFrameSent', e => e.response.payloadData && this._page._frameManager.onWebSocketFrameSent(e.requestId, e.response.opcode, e.response.payloadData)), _eventsHelper.eventsHelper.addEventListener(session, 'Network.webSocketFrameReceived', e => e.response.payloadData && this._page._frameManager.webSocketFrameReceived(e.requestId, e.response.opcode, e.response.payloadData)), _eventsHelper.eventsHelper.addEventListener(session, 'Network.webSocketClosed', e => this._page._frameManager.webSocketClosed(e.requestId)), _eventsHelper.eventsHelper.addEventListener(session, 'Network.webSocketFrameError', e => this._page._frameManager.webSocketError(e.requestId, e.errorMessage))];
+    const listeners = [_eventsHelper.eventsHelper.addEventListener(session, 'Fetch.requestPaused', this._onRequestPaused.bind(this, workerFrame)), _eventsHelper.eventsHelper.addEventListener(session, 'Fetch.authRequired', this._onAuthRequired.bind(this)), _eventsHelper.eventsHelper.addEventListener(session, 'Network.requestWillBeSent', this._onRequestWillBeSent.bind(this, workerFrame)), _eventsHelper.eventsHelper.addEventListener(session, 'Network.requestWillBeSentExtraInfo', this._onRequestWillBeSentExtraInfo.bind(this)), _eventsHelper.eventsHelper.addEventListener(session, 'Network.requestServedFromCache', this._onRequestServedFromCache.bind(this)), _eventsHelper.eventsHelper.addEventListener(session, 'Network.responseReceived', this._onResponseReceived.bind(this)), _eventsHelper.eventsHelper.addEventListener(session, 'Network.responseReceivedExtraInfo', this._onResponseReceivedExtraInfo.bind(this)), _eventsHelper.eventsHelper.addEventListener(session, 'Network.loadingFinished', this._onLoadingFinished.bind(this)), _eventsHelper.eventsHelper.addEventListener(session, 'Network.loadingFailed', this._onLoadingFailed.bind(this, workerFrame))];
+
+    if (this._page) {
+      listeners.push(...[_eventsHelper.eventsHelper.addEventListener(session, 'Network.webSocketCreated', e => this._page._frameManager.onWebSocketCreated(e.requestId, e.url)), _eventsHelper.eventsHelper.addEventListener(session, 'Network.webSocketWillSendHandshakeRequest', e => this._page._frameManager.onWebSocketRequest(e.requestId)), _eventsHelper.eventsHelper.addEventListener(session, 'Network.webSocketHandshakeResponseReceived', e => this._page._frameManager.onWebSocketResponse(e.requestId, e.response.status, e.response.statusText)), _eventsHelper.eventsHelper.addEventListener(session, 'Network.webSocketFrameSent', e => e.response.payloadData && this._page._frameManager.onWebSocketFrameSent(e.requestId, e.response.opcode, e.response.payloadData)), _eventsHelper.eventsHelper.addEventListener(session, 'Network.webSocketFrameReceived', e => e.response.payloadData && this._page._frameManager.webSocketFrameReceived(e.requestId, e.response.opcode, e.response.payloadData)), _eventsHelper.eventsHelper.addEventListener(session, 'Network.webSocketClosed', e => this._page._frameManager.webSocketClosed(e.requestId)), _eventsHelper.eventsHelper.addEventListener(session, 'Network.webSocketFrameError', e => this._page._frameManager.webSocketError(e.requestId, e.errorMessage))]);
+    }
+
+    return listeners;
   }
 
   async initialize() {
@@ -108,9 +116,7 @@ class CRNetworkManager {
   }
 
   _onRequestWillBeSent(workerFrame, event) {
-    this._responseExtraInfoTracker.requestWillBeSent(event); // Request interception doesn't happen for data URLs with Network Service.
-
-
+    // Request interception doesn't happen for data URLs with Network Service.
     if (this._protocolRequestInterceptionEnabled && !event.request.url.startsWith('data:')) {
       const requestId = event.requestId;
 
@@ -166,13 +172,6 @@ class CRNetworkManager {
   }
 
   _onRequestPaused(workerFrame, event) {
-    if (!event.responseStatusCode && !event.responseErrorReason) {
-      // Request intercepted, deliver signal to the tracker.
-      const request = this._requestIdToRequest.get(event.networkId);
-
-      if (request) this._responseExtraInfoTracker.requestPaused(request.request, event);
-    }
-
     if (!event.networkId) {
       // Fetch without networkId means that request was not recongnized by inspector, and
       // it will never receive Network.requestWillBeSent. Most likely, this is an internal request
@@ -200,6 +199,8 @@ class CRNetworkManager {
   }
 
   _onRequest(workerFrame, requestWillBeSentEvent, requestPausedEvent) {
+    var _this$_page, _this$_page2, _this$_page3;
+
     if (requestWillBeSentEvent.request.url.startsWith('data:')) return;
     let redirectedFrom = null;
 
@@ -208,19 +209,19 @@ class CRNetworkManager {
 
 
       if (request) {
-        this._handleRequestRedirect(request, requestWillBeSentEvent.redirectResponse, requestWillBeSentEvent.timestamp);
+        this._handleRequestRedirect(request, requestWillBeSentEvent.redirectResponse, requestWillBeSentEvent.timestamp, requestWillBeSentEvent.redirectHasExtraInfo);
 
         redirectedFrom = request;
       }
     }
 
-    let frame = requestWillBeSentEvent.frameId ? this._page._frameManager.frame(requestWillBeSentEvent.frameId) : workerFrame; // Requests from workers lack frameId, because we receive Network.requestWillBeSent
+    let frame = requestWillBeSentEvent.frameId ? (_this$_page = this._page) === null || _this$_page === void 0 ? void 0 : _this$_page._frameManager.frame(requestWillBeSentEvent.frameId) : workerFrame; // Requests from workers lack frameId, because we receive Network.requestWillBeSent
     // on the worker target. However, we receive Fetch.requestPaused on the page target,
     // and lack workerFrame there. Luckily, Fetch.requestPaused provides a frameId.
 
-    if (!frame && requestPausedEvent && requestPausedEvent.frameId) frame = this._page._frameManager.frame(requestPausedEvent.frameId); // Check if it's main resource request interception (targetId === main frame id).
+    if (!frame && this._page && requestPausedEvent && requestPausedEvent.frameId) frame = this._page._frameManager.frame(requestPausedEvent.frameId); // Check if it's main resource request interception (targetId === main frame id).
 
-    if (!frame && requestWillBeSentEvent.frameId === this._page._delegate._targetId) {
+    if (!frame && this._page && requestWillBeSentEvent.frameId === ((_this$_page2 = this._page) === null || _this$_page2 === void 0 ? void 0 : _this$_page2._delegate)._targetId) {
       // Main resource request for the page is being intercepted so the Frame is not created
       // yet. Precreate it here for the purposes of request interception. It will be updated
       // later as soon as the request continues and we receive frame tree from the page.
@@ -232,7 +233,7 @@ class CRNetworkManager {
     // that information is only available to the client. Perhaps we can just route to the client?
 
 
-    if (requestPausedEvent && requestPausedEvent.request.method === 'OPTIONS' && this._page._needsRequestInterception()) {
+    if (requestPausedEvent && requestPausedEvent.request.method === 'OPTIONS' && (this._page || this._serviceWorker).needsRequestInterception()) {
       const requestHeaders = requestPausedEvent.request.headers;
       const responseHeaders = [{
         name: 'Access-Control-Allow-Origin',
@@ -258,9 +259,10 @@ class CRNetworkManager {
       });
 
       return;
-    }
+    } // Non-service-worker requests MUST have a frame—if they don't, we pretend there was no request
 
-    if (!frame) {
+
+    if (!frame && !this._serviceWorker) {
       if (requestPausedEvent) this._client._sendMayFail('Fetch.continueRequest', {
         requestId: requestPausedEvent.requestId
       });
@@ -279,7 +281,9 @@ class CRNetworkManager {
     const isNavigationRequest = requestWillBeSentEvent.requestId === requestWillBeSentEvent.loaderId && requestWillBeSentEvent.type === 'Document';
     const documentId = isNavigationRequest ? requestWillBeSentEvent.loaderId : undefined;
     const request = new InterceptableRequest({
-      frame,
+      context: (this._page || this._serviceWorker)._browserContext,
+      frame: frame || null,
+      serviceWorker: this._serviceWorker || null,
       documentId,
       route,
       requestWillBeSentEvent,
@@ -289,17 +293,52 @@ class CRNetworkManager {
 
     this._requestIdToRequest.set(requestWillBeSentEvent.requestId, request);
 
-    this._page._frameManager.requestStarted(request.request, route || undefined);
+    if (requestPausedEvent && !requestPausedEvent.responseStatusCode && !requestPausedEvent.responseErrorReason) {
+      // We will not receive extra info when intercepting the request.
+      // Use the headers from the Fetch.requestPausedPayload and release the allHeaders()
+      // right away, so that client can call it from the route handler.
+      request.request.setRawRequestHeaders((0, _utils.headersObjectToArray)(requestPausedEvent.request.headers, '\n'));
+    }
+
+    (((_this$_page3 = this._page) === null || _this$_page3 === void 0 ? void 0 : _this$_page3._frameManager) || this._serviceWorker).requestStarted(request.request, route || undefined);
   }
 
-  _createResponse(request, responsePayload) {
+  _createResponse(request, responsePayload, hasExtraInfo) {
     var _responsePayload$secu, _responsePayload$secu2, _responsePayload$secu3, _responsePayload$secu4, _responsePayload$secu5;
 
     const getResponseBody = async () => {
+      const contentLengthHeader = Object.entries(responsePayload.headers).find(header => header[0].toLowerCase() === 'content-length');
+      const expectedLength = contentLengthHeader ? +contentLengthHeader[1] : undefined;
       const response = await this._client.send('Network.getResponseBody', {
         requestId: request._requestId
       });
-      return Buffer.from(response.body, response.base64Encoded ? 'base64' : 'utf8');
+      if (response.body || !expectedLength) return Buffer.from(response.body, response.base64Encoded ? 'base64' : 'utf8'); // For <link prefetch we are going to receive empty body with non-emtpy content-length expectation. Reach out for the actual content.
+
+      const resource = await this._client.send('Network.loadNetworkResource', {
+        url: request.request.url(),
+        frameId: this._serviceWorker ? undefined : request.request.frame()._id,
+        options: {
+          disableCache: false,
+          includeCredentials: true
+        }
+      });
+      const chunks = [];
+
+      while (resource.resource.stream) {
+        const chunk = await this._client.send('IO.read', {
+          handle: resource.resource.stream
+        });
+        chunks.push(Buffer.from(chunk.data, chunk.base64Encoded ? 'base64' : 'utf-8'));
+
+        if (chunk.eof) {
+          await this._client.send('IO.close', {
+            handle: resource.resource.stream
+          });
+          break;
+        }
+      }
+
+      return Buffer.concat(chunks);
     };
 
     const timingPayload = responsePayload.timing;
@@ -329,7 +368,7 @@ class CRNetworkManager {
       };
     }
 
-    const response = new network.Response(request.request, responsePayload.status, responsePayload.statusText, (0, _utils.headersObjectToArray)(responsePayload.headers), timing, getResponseBody, responsePayload.protocol);
+    const response = new network.Response(request.request, responsePayload.status, responsePayload.statusText, (0, _utils.headersObjectToArray)(responsePayload.headers), timing, getResponseBody, !!responsePayload.fromServiceWorker, responsePayload.protocol);
 
     if (responsePayload !== null && responsePayload !== void 0 && responsePayload.remoteIPAddress && typeof (responsePayload === null || responsePayload === void 0 ? void 0 : responsePayload.remotePort) === 'number') {
       response._serverAddrFinished({
@@ -348,13 +387,18 @@ class CRNetworkManager {
       validTo: responsePayload === null || responsePayload === void 0 ? void 0 : (_responsePayload$secu5 = responsePayload.securityDetails) === null || _responsePayload$secu5 === void 0 ? void 0 : _responsePayload$secu5.validTo
     });
 
-    this._responseExtraInfoTracker.processResponse(request._requestId, response, request.wasFulfilled());
+    this._responseExtraInfoTracker.processResponse(request._requestId, response, hasExtraInfo);
 
     return response;
   }
 
-  _handleRequestRedirect(request, responsePayload, timestamp) {
-    const response = this._createResponse(request, responsePayload);
+  _handleRequestRedirect(request, responsePayload, timestamp, hasExtraInfo) {
+    var _this$_page4, _this$_page5;
+
+    const response = this._createResponse(request, responsePayload, hasExtraInfo);
+
+    response.setTransferSize(null);
+    response.setEncodedBodySize(null);
 
     response._requestFinished((timestamp - request._timestamp) * 1000);
 
@@ -362,9 +406,9 @@ class CRNetworkManager {
 
     if (request._interceptionId) this._attemptedAuthentications.delete(request._interceptionId);
 
-    this._page._frameManager.requestReceivedResponse(response);
+    (((_this$_page4 = this._page) === null || _this$_page4 === void 0 ? void 0 : _this$_page4._frameManager) || this._serviceWorker).requestReceivedResponse(response);
 
-    this._page._frameManager.reportRequestFinished(request.request, response);
+    (((_this$_page5 = this._page) === null || _this$_page5 === void 0 ? void 0 : _this$_page5._frameManager) || this._serviceWorker).reportRequestFinished(request.request, response);
   }
 
   _onResponseReceivedExtraInfo(event) {
@@ -372,19 +416,45 @@ class CRNetworkManager {
   }
 
   _onResponseReceived(event) {
-    this._responseExtraInfoTracker.responseReceived(event);
+    var _this$_page7;
 
-    const request = this._requestIdToRequest.get(event.requestId); // FileUpload sends a response without a matching request.
+    let request = this._requestIdToRequest.get(event.requestId); // For frame-level Requests that are handled by a Service Worker's fetch handler, we'll never get a requestPaused event, so we need to
+    // manually create the request. In an ideal world, crNetworkManager would be able to know this on Network.requestWillBeSent, but there
+    // is not enough metadata there.
+    //
+    // PW_EXPERIMENTAL_SERVICE_WORKER_NETWORK_EVENTS we guard with, since this would fix an old bug where, when using routing,
+    // request would not be emitted to the user for requests made by a page with a SW (and fetch handler) registered
+
+
+    if (!!process.env.PW_EXPERIMENTAL_SERVICE_WORKER_NETWORK_EVENTS && !request && event.response.fromServiceWorker) {
+      var _this$_page6;
+
+      const requestWillBeSentEvent = this._requestIdToRequestWillBeSentEvent.get(event.requestId);
+
+      const frame = requestWillBeSentEvent !== null && requestWillBeSentEvent !== void 0 && requestWillBeSentEvent.frameId ? (_this$_page6 = this._page) === null || _this$_page6 === void 0 ? void 0 : _this$_page6._frameManager.frame(requestWillBeSentEvent.frameId) : null;
+
+      if (requestWillBeSentEvent && frame) {
+        this._onRequest(frame, requestWillBeSentEvent, null
+        /* requestPausedPayload */
+        );
+
+        request = this._requestIdToRequest.get(event.requestId);
+
+        this._requestIdToRequestWillBeSentEvent.delete(event.requestId);
+      }
+    } // FileUpload sends a response without a matching request.
 
 
     if (!request) return;
 
-    const response = this._createResponse(request, event.response);
+    const response = this._createResponse(request, event.response, event.hasExtraInfo);
 
-    this._page._frameManager.requestReceivedResponse(response);
+    (((_this$_page7 = this._page) === null || _this$_page7 === void 0 ? void 0 : _this$_page7._frameManager) || this._serviceWorker).requestReceivedResponse(response);
   }
 
   _onLoadingFinished(event) {
+    var _this$_page8;
+
     this._responseExtraInfoTracker.loadingFinished(event);
 
     let request = this._requestIdToRequest.get(event.requestId);
@@ -398,8 +468,8 @@ class CRNetworkManager {
     const response = request.request._existingResponse();
 
     if (response) {
-      request.request.responseSize.transferSize = event.encodedDataLength;
-      request.request.responseSize.encodedBodySize = event.encodedDataLength - request.request.responseSize.responseHeadersSize;
+      response.setTransferSize(event.encodedDataLength);
+      response.responseHeadersSize().then(size => response.setEncodedBodySize(event.encodedDataLength - size));
 
       response._requestFinished(_helper.helper.secondsToRoundishMillis(event.timestamp - request._timestamp));
     }
@@ -408,10 +478,12 @@ class CRNetworkManager {
 
     if (request._interceptionId) this._attemptedAuthentications.delete(request._interceptionId);
 
-    this._page._frameManager.reportRequestFinished(request.request, response);
+    (((_this$_page8 = this._page) === null || _this$_page8 === void 0 ? void 0 : _this$_page8._frameManager) || this._serviceWorker).reportRequestFinished(request.request, response);
   }
 
   _onLoadingFailed(workerFrame, event) {
+    var _this$_page9;
+
     this._responseExtraInfoTracker.loadingFailed(event);
 
     let request = this._requestIdToRequest.get(event.requestId);
@@ -439,7 +511,12 @@ class CRNetworkManager {
 
     const response = request.request._existingResponse();
 
-    if (response) response._requestFinished(_helper.helper.secondsToRoundishMillis(event.timestamp - request._timestamp));
+    if (response) {
+      response.setTransferSize(null);
+      response.setEncodedBodySize(null);
+
+      response._requestFinished(_helper.helper.secondsToRoundishMillis(event.timestamp - request._timestamp));
+    }
 
     this._requestIdToRequest.delete(request._requestId);
 
@@ -447,7 +524,7 @@ class CRNetworkManager {
 
     request.request._setFailureText(event.errorText);
 
-    this._page._frameManager.requestFailed(request.request, !!event.canceled);
+    (((_this$_page9 = this._page) === null || _this$_page9 === void 0 ? void 0 : _this$_page9._frameManager) || this._serviceWorker).requestFailed(request.request, !!event.canceled);
   }
 
   _maybeAdoptMainRequest(requestId) {
@@ -487,12 +564,14 @@ class InterceptableRequest {
     this._route = void 0;
     this._redirectedFrom = void 0;
     const {
+      context,
       frame,
       documentId,
       route,
       requestWillBeSentEvent,
       requestPausedEvent,
-      redirectedFrom
+      redirectedFrom,
+      serviceWorker
     } = options;
     this._timestamp = requestWillBeSentEvent.timestamp;
     this._wallTime = requestWillBeSentEvent.wallTime;
@@ -510,7 +589,7 @@ class InterceptableRequest {
     const type = (requestWillBeSentEvent.type || '').toLowerCase();
     let postDataBuffer = null;
     if (postDataEntries && postDataEntries.length && postDataEntries[0].bytes) postDataBuffer = Buffer.from(postDataEntries[0].bytes, 'base64');
-    this.request = new network.Request(frame, (redirectedFrom === null || redirectedFrom === void 0 ? void 0 : redirectedFrom.request) || null, documentId, url, type, method, postDataBuffer, (0, _utils.headersObjectToArray)(headers));
+    this.request = new network.Request(context, frame, serviceWorker, (redirectedFrom === null || redirectedFrom === void 0 ? void 0 : redirectedFrom.request) || null, documentId, url, type, method, postDataBuffer, (0, _utils.headersObjectToArray)(headers));
   }
 
   _routeForRedirectChain() {
@@ -521,19 +600,12 @@ class InterceptableRequest {
     return request._route;
   }
 
-  wasFulfilled() {
-    var _this$_routeForRedire;
-
-    return ((_this$_routeForRedire = this._routeForRedirectChain()) === null || _this$_routeForRedire === void 0 ? void 0 : _this$_routeForRedire._wasFulfilled) || false;
-  }
-
 }
 
 class RouteImpl {
   constructor(client, interceptionId) {
     this._client = void 0;
     this._interceptionId = void 0;
-    this._wasFulfilled = false;
     this._client = client;
     this._interceptionId = interceptionId;
   }
@@ -551,7 +623,6 @@ class RouteImpl {
   }
 
   async fulfill(response) {
-    this._wasFulfilled = true;
     const body = response.isBase64 ? response.body : Buffer.from(response.body).toString('base64');
     const responseHeaders = splitSetCookieHeader(response.headers); // In certain cases, protocol will return error if the request was already canceled
     // or the page was closed. We should tolerate these errors.
@@ -614,26 +685,20 @@ const errorReasons = {
 // This class aligns responses with response headers from extra info:
 //   - Network.requestWillBeSent, Network.responseReceived, Network.loadingFinished/loadingFailed are
 //     dispatched using one channel.
-//   - Network.requestWillBeSentExtraInfo and Network.responseReceivedExtraInfo are dispatches on
+//   - Network.requestWillBeSentExtraInfo and Network.responseReceivedExtraInfo are dispatched on
 //     another channel. Those channels are not associated, so events come in random order.
 //
 // This class will associate responses with the new headers. These extra info headers will become
 // available to client reliably upon requestfinished event only. It consumes CDP
 // signals on one end and processResponse(network.Response) signals on the other hands. It then makes
-// sure that responses have all the extra headers in place by the time request finises.
+// sure that responses have all the extra headers in place by the time request finishes.
 //
 // The shape of the instrumentation API is deliberately following the CDP, so that it
-// what clear what is called when and what this means to the tracker without extra
+// is clear what is called when and what this means to the tracker without extra
 // documentation.
 class ResponseExtraInfoTracker {
   constructor() {
     this._requests = new Map();
-  }
-
-  requestWillBeSent(event) {
-    const info = this._requests.get(event.requestId);
-
-    if (info && event.redirectResponse) this._innerResponseReceived(info, event.redirectResponse);else this._getOrCreateEntry(event.requestId);
   }
 
   requestWillBeSentExtraInfo(event) {
@@ -642,34 +707,14 @@ class ResponseExtraInfoTracker {
     info.requestWillBeSentExtraInfo.push(event);
 
     this._patchHeaders(info, info.requestWillBeSentExtraInfo.length - 1);
+
+    this._checkFinished(info);
   }
 
   requestServedFromCache(event) {
     const info = this._getOrCreateEntry(event.requestId);
 
-    info.requestServedFromCache = true;
-  }
-
-  responseReceived(event) {
-    const info = this._requests.get(event.requestId);
-
-    if (!info) return;
-
-    this._innerResponseReceived(info, event.response);
-  }
-
-  requestPaused(request, event) {
-    // requestWillBeSentExtraInfo is not being called when interception
-    // is enabled. But interception is mutually exclusive with the redirects.
-    // So we can use the headers from the Fetch.requestPausedPayload immediately.
-    request.setRawRequestHeaders((0, _utils.headersObjectToArray)(event.request.headers, '\n'));
-  }
-
-  _innerResponseReceived(info, response) {
-    if (!response.connectionId) {
-      // Starting with this response we no longer can guarantee that response and extra info correspond to the same index.
-      info.sawResponseWithoutConnectionId = true;
-    }
+    info.servedFromCache = true;
   }
 
   responseReceivedExtraInfo(event) {
@@ -682,19 +727,22 @@ class ResponseExtraInfoTracker {
     this._checkFinished(info);
   }
 
-  processResponse(requestId, response, wasFulfilled) {
-    // We are not interested in ExtraInfo tracking for fulfilled requests, our Blink
-    // headers are the ones that contain fulfilled headers.
-    if (wasFulfilled) {
-      this._stopTracking(requestId);
+  processResponse(requestId, response, hasExtraInfo) {
+    var _info;
 
+    let info = this._requests.get(requestId); // Cached responses have erroneous "hasExtraInfo" flag.
+    // https://bugs.chromium.org/p/chromium/issues/detail?id=1340398
+
+
+    if (!hasExtraInfo || (_info = info) !== null && _info !== void 0 && _info.servedFromCache) {
+      // Use "provisional" headers as "raw" ones.
+      response.request().setRawRequestHeaders(null);
+      response.setResponseHeadersSize(null);
+      response.setRawResponseHeaders(null);
       return;
     }
 
-    const info = this._requests.get(requestId);
-
-    if (!info || info.sawResponseWithoutConnectionId) return;
-    if (!info.requestServedFromCache) response.setWillReceiveExtraHeaders();
+    info = this._getOrCreateEntry(requestId);
     info.responses.push(response);
 
     this._patchHeaders(info, info.responses.length - 1);
@@ -726,9 +774,7 @@ class ResponseExtraInfoTracker {
         requestId: requestId,
         requestWillBeSentExtraInfo: [],
         responseReceivedExtraInfo: [],
-        responses: [],
-        sawResponseWithoutConnectionId: false,
-        requestServedFromCache: false
+        responses: []
       };
 
       this._requests.set(requestId, info);
@@ -740,14 +786,20 @@ class ResponseExtraInfoTracker {
   _patchHeaders(info, index) {
     const response = info.responses[index];
     const requestExtraInfo = info.requestWillBeSentExtraInfo[index];
-    if (response && requestExtraInfo) response.request().setRawRequestHeaders((0, _utils.headersObjectToArray)(requestExtraInfo.headers, '\n'));
+
+    if (response && requestExtraInfo) {
+      response.request().setRawRequestHeaders((0, _utils.headersObjectToArray)(requestExtraInfo.headers, '\n'));
+      info.requestWillBeSentExtraInfo[index] = undefined;
+    }
+
     const responseExtraInfo = info.responseReceivedExtraInfo[index];
 
     if (response && responseExtraInfo) {
       var _responseExtraInfo$he;
 
+      response.setResponseHeadersSize(((_responseExtraInfo$he = responseExtraInfo.headersText) === null || _responseExtraInfo$he === void 0 ? void 0 : _responseExtraInfo$he.length) || 0);
       response.setRawResponseHeaders((0, _utils.headersObjectToArray)(responseExtraInfo.headers, '\n'));
-      response.request().responseSize.responseHeadersSize = ((_responseExtraInfo$he = responseExtraInfo.headersText) === null || _responseExtraInfo$he === void 0 ? void 0 : _responseExtraInfo$he.length) || 0;
+      info.responseReceivedExtraInfo[index] = undefined;
     }
   }
 
@@ -756,7 +808,6 @@ class ResponseExtraInfoTracker {
 
     if (info.responses.length <= info.responseReceivedExtraInfo.length) {
       // We have extra info for each response.
-      // We could have more extra infos because we stopped collecting responses at some point.
       this._stopTracking(info.requestId);
 
       return;

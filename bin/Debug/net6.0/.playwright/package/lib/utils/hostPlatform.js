@@ -7,7 +7,7 @@ exports.hostPlatform = void 0;
 
 var _os = _interopRequireDefault(require("os"));
 
-var _ubuntuVersion = require("./ubuntuVersion");
+var _linuxUtils = require("./linuxUtils");
 
 function _interopRequireDefault(obj) { return obj && obj.__esModule ? obj : { default: obj }; }
 
@@ -55,10 +55,16 @@ const hostPlatform = (() => {
 
   if (platform === 'linux') {
     const archSuffix = _os.default.arch() === 'arm64' ? '-arm64' : '';
-    const ubuntuVersion = (0, _ubuntuVersion.getUbuntuVersionSync)();
-    if (!ubuntuVersion) return 'generic-linux' + archSuffix;
-    if (parseInt(ubuntuVersion, 10) <= 19) return 'ubuntu18.04' + archSuffix;
-    return 'ubuntu20.04' + archSuffix;
+    const distroInfo = (0, _linuxUtils.getLinuxDistributionInfoSync)(); // Pop!_OS is ubuntu-based and has the same versions.
+
+    if ((distroInfo === null || distroInfo === void 0 ? void 0 : distroInfo.id) === 'ubuntu' || (distroInfo === null || distroInfo === void 0 ? void 0 : distroInfo.id) === 'pop') {
+      if (parseInt(distroInfo.version, 10) <= 19) return 'ubuntu18.04' + archSuffix;
+      if (parseInt(distroInfo.version, 10) <= 21) return 'ubuntu20.04' + archSuffix;
+      return 'ubuntu22.04' + archSuffix;
+    }
+
+    if ((distroInfo === null || distroInfo === void 0 ? void 0 : distroInfo.id) === 'debian' && (distroInfo === null || distroInfo === void 0 ? void 0 : distroInfo.version) === '11' && !archSuffix) return 'debian11';
+    return 'generic-linux' + archSuffix;
   }
 
   if (platform === 'win32') return 'win64';

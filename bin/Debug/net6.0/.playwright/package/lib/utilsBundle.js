@@ -3,7 +3,15 @@
 Object.defineProperty(exports, "__esModule", {
   value: true
 });
-exports.wsServer = exports.wsSender = exports.wsReceiver = exports.ws = exports.rimraf = exports.progress = exports.program = exports.ms = exports.minimatch = exports.mime = exports.lockfile = exports.jpegjs = exports.getProxyForUrl = exports.debug = exports.colors = exports.StackUtils = exports.SocksProxyAgent = exports.PNG = exports.HttpsProxyAgent = void 0;
+exports.ms = exports.minimatch = exports.mime = exports.lockfile = exports.jpegjs = exports.getProxyForUrl = exports.debug = exports.colors = exports.SocksProxyAgent = exports.PNG = exports.HttpsProxyAgent = void 0;
+exports.parseStackTraceLine = parseStackTraceLine;
+exports.wsServer = exports.wsSender = exports.wsReceiver = exports.ws = exports.rimraf = exports.progress = exports.program = void 0;
+
+var _url = _interopRequireDefault(require("url"));
+
+var _path = _interopRequireDefault(require("path"));
+
+function _interopRequireDefault(obj) { return obj && obj.__esModule ? obj : { default: obj }; }
 
 /**
  * Copyright (c) Microsoft Corporation.
@@ -76,10 +84,6 @@ const SocksProxyAgent = require('./utilsBundleImpl').SocksProxyAgent;
 
 exports.SocksProxyAgent = SocksProxyAgent;
 
-const StackUtils = require('./utilsBundleImpl').StackUtils;
-
-exports.StackUtils = StackUtils;
-
 const ws = require('./utilsBundleImpl').ws;
 
 exports.ws = ws;
@@ -95,3 +99,26 @@ exports.wsReceiver = wsReceiver;
 const wsSender = require('./utilsBundleImpl').wsSender;
 
 exports.wsSender = wsSender;
+
+const StackUtils = require('./utilsBundleImpl').StackUtils;
+
+const stackUtils = new StackUtils();
+
+function parseStackTraceLine(line) {
+  const frame = stackUtils.parseLine(line);
+  if (!frame) return {
+    frame: null,
+    fileName: null
+  };
+  let fileName = null;
+
+  if (frame.file) {
+    // ESM files return file:// URLs, see here: https://github.com/tapjs/stack-utils/issues/60
+    fileName = frame.file.startsWith('file://') ? _url.default.fileURLToPath(frame.file) : _path.default.resolve(process.cwd(), frame.file);
+  }
+
+  return {
+    frame,
+    fileName
+  };
+}

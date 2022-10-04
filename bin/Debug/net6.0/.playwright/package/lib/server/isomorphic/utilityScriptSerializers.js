@@ -30,8 +30,16 @@ function source() {
     return obj instanceof Date || Object.prototype.toString.call(obj) === '[object Date]';
   }
 
+  function isURL(obj) {
+    return obj instanceof URL || Object.prototype.toString.call(obj) === '[object URL]';
+  }
+
   function isError(obj) {
-    return obj instanceof Error || obj && obj.__proto__ && obj.__proto__.name === 'Error';
+    try {
+      return obj instanceof Error || obj && obj.__proto__ && obj.__proto__.name === 'Error';
+    } catch (error) {
+      return false;
+    }
   }
 
   function parseEvaluationResultValue(value, handles = [], refs = new Map()) {
@@ -51,6 +59,7 @@ function source() {
       }
 
       if ('d' in value) return new Date(value.d);
+      if ('u' in value) return new URL(value.u);
       if ('r' in value) return new RegExp(value.r.p, value.r.f);
 
       if ('a' in value) {
@@ -139,6 +148,9 @@ function source() {
     if (isDate(value)) return {
       d: value.toJSON()
     };
+    if (isURL(value)) return {
+      u: value.toJSON()
+    };
     if (isRegExp(value)) return {
       r: {
         p: value.source,
@@ -187,8 +199,10 @@ function source() {
           k: name,
           v: serialize(item, handleSerializer, visitorInfo)
         });
-      }
+      } // If Object.keys().length === 0 we fall back to toJSON if it exists
 
+
+      if (o.length === 0 && value.toJSON && typeof value.toJSON === 'function') return innerSerialize(value.toJSON(), handleSerializer, visitorInfo);
       return {
         o,
         id

@@ -40,7 +40,7 @@ function launchGridAgent(agentId, gridURL, runId) {
     log('worker requested ' + message);
     const {
       workerId,
-      browserAlias
+      browserName
     } = JSON.parse(message);
 
     if (!workerId) {
@@ -48,12 +48,12 @@ function launchGridAgent(agentId, gridURL, runId) {
       return;
     }
 
-    if (!browserAlias) {
-      log('browserAlias not specified');
+    if (!browserName) {
+      log('browserName not specified');
       return;
     }
 
-    (0, _child_process.fork)(require.resolve('./gridBrowserWorker.js'), [gridURL, agentId, workerId, browserAlias], {
+    (0, _child_process.fork)(require.resolve('./gridBrowserWorker.js'), [gridURL, agentId, workerId, browserName], {
       detached: true
     });
   });

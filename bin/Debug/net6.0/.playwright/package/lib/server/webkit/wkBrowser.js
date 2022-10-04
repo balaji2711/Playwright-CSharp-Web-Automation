@@ -41,8 +41,8 @@ function _interopRequireWildcard(obj, nodeInterop) { if (!nodeInterop && obj && 
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-const DEFAULT_USER_AGENT = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/15.4 Safari/605.1.15';
-const BROWSER_VERSION = '15.4';
+const DEFAULT_USER_AGENT = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.0 Safari/605.1.15';
+const BROWSER_VERSION = '16.0';
 
 class WKBrowser extends _browser.Browser {
   static async connect(transport, options) {
@@ -242,7 +242,6 @@ class WKBrowserContext extends _browserContext.BrowserContext {
       browserContextId,
       languages: [this._options.locale]
     }));
-    if (this._options.permissions) promises.push(this.grantPermissions(this._options.permissions));
     if (this._options.geolocation) promises.push(this.setGeolocation(this._options.geolocation));
     if (this._options.offline) promises.push(this.setOffline(this._options.offline));
     if (this._options.httpCredentials) promises.push(this.setHTTPCredentials(this._options.httpCredentials));
@@ -323,6 +322,12 @@ class WKBrowserContext extends _browserContext.BrowserContext {
     this._options.extraHTTPHeaders = headers;
 
     for (const page of this.pages()) await page._delegate.updateExtraHTTPHeaders();
+  }
+
+  async setUserAgent(userAgent) {
+    this._options.userAgent = userAgent;
+
+    for (const page of this.pages()) await page._delegate.updateUserAgent();
   }
 
   async setOffline(offline) {

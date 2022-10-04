@@ -39,9 +39,9 @@ class BrowserDispatcher extends _dispatcher.Dispatcher {
     super(scope, browser, 'Browser', {
       version: browser.version(),
       name: browser.options.name
-    }, true);
+    });
     this._type_Browser = true;
-    browser.on(_browser.Browser.Events.Disconnected, () => this._didClose());
+    this.addObjectListener(_browser.Browser.Events.Disconnected, () => this._didClose());
   }
 
   _didClose() {
@@ -53,8 +53,12 @@ class BrowserDispatcher extends _dispatcher.Dispatcher {
   async newContext(params, metadata) {
     const context = await this._object.newContext(metadata, params);
     return {
-      context: new _browserContextDispatcher.BrowserContextDispatcher(this._scope, context)
+      context: new _browserContextDispatcher.BrowserContextDispatcher(this, context)
     };
+  }
+
+  async newContextForReuse(params, metadata) {
+    return newContextForReuse(this._object, this, params, null, metadata);
   }
 
   async close() {
@@ -69,7 +73,7 @@ class BrowserDispatcher extends _dispatcher.Dispatcher {
     if (!this._object.options.isChromium) throw new Error(`CDP session is only available in Chromium`);
     const crBrowser = this._object;
     return {
-      session: new _cdpSessionDispatcher.CDPSessionDispatcher(this._scope, await crBrowser.newBrowserCDPSession())
+      session: new _cdpSessionDispatcher.CDPSessionDispatcher(this, await crBrowser.newBrowserCDPSession())
     };
   }
 
@@ -82,9 +86,8 @@ class BrowserDispatcher extends _dispatcher.Dispatcher {
   async stopTracing() {
     if (!this._object.options.isChromium) throw new Error(`Tracing is only available in Chromium`);
     const crBrowser = this._object;
-    const buffer = await crBrowser.stopTracing();
     return {
-      binary: buffer.toString('base64')
+      binary: await crBrowser.stopTracing()
     };
   }
 
@@ -98,7 +101,7 @@ class ConnectedBrowserDispatcher extends _dispatcher.Dispatcher {
     super(scope, browser, 'Browser', {
       version: browser.version(),
       name: browser.options.name
-    }, true); // When we have a remotely-connected browser, each client gets a fresh Selector instance,
+    }); // When we have a remotely-connected browser, each client gets a fresh Selector instance,
     // so that two clients do not interfere between each other.
 
     this._type_Browser = true;
@@ -116,8 +119,12 @@ class ConnectedBrowserDispatcher extends _dispatcher.Dispatcher {
     context.setSelectors(this.selectors);
     context.on(_browserContext.BrowserContext.Events.Close, () => this._contexts.delete(context));
     return {
-      context: new _browserContextDispatcher.BrowserContextDispatcher(this._scope, context)
+      context: new _browserContextDispatcher.BrowserContextDispatcher(this, context)
     };
+  }
+
+  async newContextForReuse(params, metadata) {
+    return newContextForReuse(this._object, this, params, this.selectors, metadata);
   }
 
   async close() {// Client should not send us Browser.close.
@@ -130,7 +137,7 @@ class ConnectedBrowserDispatcher extends _dispatcher.Dispatcher {
     if (!this._object.options.isChromium) throw new Error(`CDP session is only available in Chromium`);
     const crBrowser = this._object;
     return {
-      session: new _cdpSessionDispatcher.CDPSessionDispatcher(this._scope, await crBrowser.newBrowserCDPSession())
+      session: new _cdpSessionDispatcher.CDPSessionDispatcher(this, await crBrowser.newBrowserCDPSession())
     };
   }
 
@@ -143,9 +150,8 @@ class ConnectedBrowserDispatcher extends _dispatcher.Dispatcher {
   async stopTracing() {
     if (!this._object.options.isChromium) throw new Error(`Tracing is only available in Chromium`);
     const crBrowser = this._object;
-    const buffer = await crBrowser.stopTracing();
     return {
-      binary: buffer.toString('base64')
+      binary: await crBrowser.stopTracing()
     };
   }
 
@@ -156,3 +162,22 @@ class ConnectedBrowserDispatcher extends _dispatcher.Dispatcher {
 }
 
 exports.ConnectedBrowserDispatcher = ConnectedBrowserDispatcher;
+
+async function newContextForReuse(browser, scope, params, selectors, metadata) {
+  const {
+    context,
+    needsReset
+  } = await browser.newContextForReuse(params, metadata);
+
+  if (needsReset) {
+    const oldContextDispatcher = (0, _dispatcher.existingDispatcher)(context);
+    if (oldContextDispatcher) oldContextDispatcher._dispose();
+    await context.resetForReuse(metadata, params);
+  }
+
+  if (selectors) context.setSelectors(selectors);
+  const contextDispatcher = new _browserContextDispatcher.BrowserContextDispatcher(scope, context);
+  return {
+    context: contextDispatcher
+  };
+}

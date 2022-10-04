@@ -97,7 +97,7 @@ class FFNetworkManager {
       requestStart: relativeToStart(event.timing.requestStart),
       responseStart: relativeToStart(event.timing.responseStart)
     };
-    const response = new network.Response(request.request, event.status, event.statusText, parseMultivalueHeaders(event.headers), timing, getResponseBody);
+    const response = new network.Response(request.request, event.status, event.statusText, parseMultivalueHeaders(event.headers), timing, getResponseBody, event.fromServiceWorker);
 
     if (event !== null && event !== void 0 && event.remoteIPAddress && typeof (event === null || event === void 0 ? void 0 : event.remotePort) === 'number') {
       response._serverAddrFinished({
@@ -114,7 +114,12 @@ class FFNetworkManager {
       issuer: event === null || event === void 0 ? void 0 : (_event$securityDetail3 = event.securityDetails) === null || _event$securityDetail3 === void 0 ? void 0 : _event$securityDetail3.issuer,
       validFrom: event === null || event === void 0 ? void 0 : (_event$securityDetail4 = event.securityDetails) === null || _event$securityDetail4 === void 0 ? void 0 : _event$securityDetail4.validFrom,
       validTo: event === null || event === void 0 ? void 0 : (_event$securityDetail5 = event.securityDetails) === null || _event$securityDetail5 === void 0 ? void 0 : _event$securityDetail5.validTo
-    });
+    }); // "raw" headers are the same as "provisional" headers in Firefox.
+
+
+    response.setRawResponseHeaders(null); // Headers size are not available in Firefox.
+
+    response.setResponseHeadersSize(null);
 
     this._page._frameManager.requestReceivedResponse(response);
   }
@@ -126,7 +131,8 @@ class FFNetworkManager {
 
     const response = request.request._existingResponse();
 
-    request.request.responseSize.transferSize = event.transferSize; // Keep redirected requests in the map for future reference as redirectedFrom.
+    response.setTransferSize(event.transferSize);
+    response.setEncodedBodySize(event.encodedBodySize); // Keep redirected requests in the map for future reference as redirectedFrom.
 
     const isRedirected = response.status() >= 300 && response.status() <= 399;
     const responseEndTime = event.responseEndTime ? event.responseEndTime / 1000 - response.timing().startTime : -1;
@@ -153,7 +159,12 @@ class FFNetworkManager {
 
     const response = request.request._existingResponse();
 
-    if (response) response._requestFinished(-1);
+    if (response) {
+      response.setTransferSize(null);
+      response.setEncodedBodySize(null);
+
+      response._requestFinished(-1);
+    }
 
     request.request._setFailureText(event.errorCode);
 
@@ -201,7 +212,9 @@ class InterceptableRequest {
     if (redirectedFrom) redirectedFrom._redirectedTo = this;
     let postDataBuffer = null;
     if (payload.postData) postDataBuffer = Buffer.from(payload.postData, 'base64');
-    this.request = new network.Request(frame, redirectedFrom ? redirectedFrom.request : null, payload.navigationId, payload.url, internalCauseToResourceType[payload.internalCause] || causeToResourceType[payload.cause] || 'other', payload.method, postDataBuffer, payload.headers);
+    this.request = new network.Request(frame._page._browserContext, frame, null, redirectedFrom ? redirectedFrom.request : null, payload.navigationId, payload.url, internalCauseToResourceType[payload.internalCause] || causeToResourceType[payload.cause] || 'other', payload.method, postDataBuffer, payload.headers); // "raw" headers are the same as "provisional" headers in Firefox.
+
+    this.request.setRawRequestHeaders(null);
   }
 
   _finalRequest() {

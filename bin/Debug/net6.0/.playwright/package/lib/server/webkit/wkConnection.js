@@ -56,14 +56,15 @@ class WKConnection {
     this._closed = false;
     this.browserSession = void 0;
     this._transport = transport;
-    this._transport.onmessage = this._dispatchMessage.bind(this);
-    this._transport.onclose = this._onClose.bind(this);
     this._onDisconnect = onDisconnect;
     this._protocolLogger = protocolLogger;
     this._browserLogsCollector = browserLogsCollector;
     this.browserSession = new WKSession(this, '', _errors.kBrowserClosedError, message => {
       this.rawSend(message);
     });
+    this._transport.onmessage = this._dispatchMessage.bind(this); // onclose should be set last, since it can be immediately called.
+
+    this._transport.onclose = this._onClose.bind(this);
   }
 
   nextMessageId() {

@@ -3,7 +3,7 @@
 Object.defineProperty(exports, "__esModule", {
   value: true
 });
-exports.RecorderApp = void 0;
+exports.RecorderApp = exports.EmptyRecorderApp = void 0;
 
 var _fs = _interopRequireDefault(require("fs"));
 
@@ -40,12 +40,33 @@ function _interopRequireDefault(obj) { return obj && obj.__esModule ? obj : { de
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+class EmptyRecorderApp extends _events.EventEmitter {
+  async close() {}
+
+  async setPaused(paused) {}
+
+  async setMode(mode) {}
+
+  async setFileIfNeeded(file) {}
+
+  async setSelector(selector, focus) {}
+
+  async updateCallLogs(callLogs) {}
+
+  async setSources(sources) {}
+
+}
+
+exports.EmptyRecorderApp = EmptyRecorderApp;
+
 class RecorderApp extends _events.EventEmitter {
-  constructor(page, wsEndpoint) {
+  constructor(recorder, page, wsEndpoint) {
     super();
     this._page = void 0;
     this.wsEndpoint = void 0;
+    this._recorder = void 0;
     this.setMaxListeners(0);
+    this._recorder = recorder;
     this._page = page;
     this.wsEndpoint = wsEndpoint;
   }
@@ -90,8 +111,9 @@ class RecorderApp extends _events.EventEmitter {
     await mainFrame.goto((0, _instrumentation.serverSideCallMetadata)(), 'https://playwright/index.html');
   }
 
-  static async open(sdkLanguage, headed) {
-    if (process.env.PW_CODEGEN_NO_INSPECTOR) return new HeadlessRecorderApp();
+  static async open(recorder, inspectedContext, handleSIGINT) {
+    const sdkLanguage = inspectedContext._browser.options.sdkLanguage;
+    const headed = !!inspectedContext._browser.options.headful;
 
     const recorderPlaywright = require('../playwright').createPlaywright('javascript', true);
 
@@ -103,14 +125,15 @@ class RecorderApp extends _events.EventEmitter {
       noDefaultViewport: true,
       ignoreDefaultArgs: ['--enable-automation'],
       headless: !!process.env.PWTEST_CLI_HEADLESS || (0, _utils.isUnderTest)() && !headed,
-      useWebSocket: !!process.env.PWTEST_RECORDER_PORT
+      useWebSocket: !!process.env.PWTEST_RECORDER_PORT,
+      handleSIGINT
     });
     const controller = new _progress.ProgressController((0, _instrumentation.serverSideCallMetadata)(), context._browser);
     await controller.run(async progress => {
       await context._browser._defaultContext._loadDefaultContextAsIs(progress);
     });
     const [page] = context.pages();
-    const result = new RecorderApp(page, context._browser.options.wsEndpoint);
+    const result = new RecorderApp(recorder, page, context._browser.options.wsEndpoint);
     await result._init();
     return result;
   }
@@ -139,7 +162,7 @@ class RecorderApp extends _events.EventEmitter {
     }).toString(), true, sources, 'main').catch(() => {}); // Testing harness for runCLI mode.
 
     {
-      if (process.env.PWTEST_CLI_EXIT && sources.length) {
+      if ((process.env.PWTEST_CLI_IS_UNDER_TEST || process.env.PWTEST_CLI_EXIT) && sources.length) {
         process.stdout.write('\n-------------8<-------------\n');
         process.stdout.write(sources[0].text);
         process.stdout.write('\n-------------8<-------------\n');
@@ -148,6 +171,12 @@ class RecorderApp extends _events.EventEmitter {
   }
 
   async setSelector(selector, focus) {
+    if (focus) {
+      this._recorder.setMode('none');
+
+      this._page.bringToFront();
+    }
+
     await this._page.mainFrame().evaluateExpression((arg => {
       window.playwrightSetSelector(arg.selector, arg.focus);
     }).toString(), true, {
@@ -162,29 +191,6 @@ class RecorderApp extends _events.EventEmitter {
     }).toString(), true, callLogs, 'main').catch(() => {});
   }
 
-  async bringToFront() {
-    await this._page.bringToFront();
-  }
-
 }
 
 exports.RecorderApp = RecorderApp;
-
-class HeadlessRecorderApp extends _events.EventEmitter {
-  async close() {}
-
-  async setPaused(paused) {}
-
-  async setMode(mode) {}
-
-  async setFileIfNeeded(file) {}
-
-  async setSelector(selector, focus) {}
-
-  async updateCallLogs(callLogs) {}
-
-  bringToFront() {}
-
-  async setSources(sources) {}
-
-}

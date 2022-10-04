@@ -11,8 +11,6 @@ var dom = _interopRequireWildcard(require("../dom"));
 
 var _eventsHelper = require("../../utils/eventsHelper");
 
-var _utils = require("../../utils");
-
 var _page = require("../page");
 
 var _ffAccessibility = require("./ffAccessibility");
@@ -401,17 +399,15 @@ class FFPage {
 
   async updateExtraHTTPHeaders() {
     await this._session.send('Network.setExtraHTTPHeaders', {
-      headers: this._page._state.extraHTTPHeaders || []
+      headers: this._page.extraHTTPHeaders() || []
     });
   }
 
-  async setEmulatedSize(emulatedSize) {
-    (0, _utils.assert)(this._page._state.emulatedSize === emulatedSize);
+  async updateEmulatedViewportSize() {
+    const viewportSize = this._page.viewportSize();
+
     await this._session.send('Page.setViewportSize', {
-      viewportSize: {
-        width: emulatedSize.viewport.width,
-        height: emulatedSize.viewport.height
-      }
+      viewportSize
     });
   }
 
@@ -420,12 +416,16 @@ class FFPage {
   }
 
   async updateEmulateMedia() {
-    const colorScheme = this._page._state.colorScheme === null ? undefined : this._page._state.colorScheme;
-    const reducedMotion = this._page._state.reducedMotion === null ? undefined : this._page._state.reducedMotion;
-    const forcedColors = this._page._state.forcedColors === null ? undefined : this._page._state.forcedColors;
+    var _emulatedMedia$colorS, _emulatedMedia$reduce, _emulatedMedia$forced;
+
+    const emulatedMedia = this._page.emulatedMedia();
+
+    const colorScheme = (_emulatedMedia$colorS = emulatedMedia.colorScheme) !== null && _emulatedMedia$colorS !== void 0 ? _emulatedMedia$colorS : undefined;
+    const reducedMotion = (_emulatedMedia$reduce = emulatedMedia.reducedMotion) !== null && _emulatedMedia$reduce !== void 0 ? _emulatedMedia$reduce : undefined;
+    const forcedColors = (_emulatedMedia$forced = emulatedMedia.forcedColors) !== null && _emulatedMedia$forced !== void 0 ? _emulatedMedia$forced : undefined;
     await this._session.send('Page.setEmulatedMedia', {
       // Empty string means reset.
-      type: this._page._state.mediaType === null ? '' : this._page._state.mediaType,
+      type: emulatedMedia.media === null ? '' : emulatedMedia.media,
       colorScheme,
       reducedMotion,
       forcedColors
@@ -433,13 +433,15 @@ class FFPage {
   }
 
   async updateRequestInterception() {
-    await this._networkManager.setRequestInterception(this._page._needsRequestInterception());
+    await this._networkManager.setRequestInterception(this._page.needsRequestInterception());
   }
 
-  async setFileChooserIntercepted(enabled) {
+  async updateFileChooserInterception() {
+    const enabled = this._page.fileChooserIntercepted();
+
     await this._session.send('Page.setInterceptFileChooserDialog', {
       enabled
-    }).catch(e => {}); // target can be closed.
+    }).catch(() => {}); // target can be closed.
   }
 
   async reload() {
@@ -506,9 +508,7 @@ class FFPage {
         width: viewportRect.width,
         height: viewportRect.height
       };
-    } // TODO: remove fullPage option from Page.screenshot.
-    // TODO: remove Page.getBoundingBox method.
-
+    }
 
     progress.throwIfAborted();
     const {
@@ -657,21 +657,13 @@ class FFPage {
   async getFrameElement(frame) {
     const parent = frame.parentFrame();
     if (!parent) throw new Error('Frame has been detached.');
-
-    const info = this._page.parseSelector('frame,iframe');
-
-    const handles = await this._page.selectors._queryAll(parent, info);
-    const items = await Promise.all(handles.map(async handle => {
-      const frame = await handle.contentFrame().catch(e => null);
-      return {
-        handle,
-        frame
-      };
-    }));
-    const result = items.find(item => item.frame === frame);
-    items.map(item => item === result ? Promise.resolve() : item.handle.dispose());
-    if (!result) throw new Error('Frame has been detached.');
-    return result.handle;
+    const context = await parent._mainContext();
+    const result = await this._session.send('Page.adoptNode', {
+      frameId: frame._id,
+      executionContextId: context[contextDelegateSymbol]._executionContextId
+    });
+    if (!result.remoteObject) throw new Error('Frame has been detached.');
+    return context.createHandle(result.remoteObject);
   }
 
 }

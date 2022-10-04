@@ -95,8 +95,8 @@ function stripFragmentFromUrl(url) {
 }
 
 class Request extends _instrumentation.SdkObject {
-  constructor(frame, redirectedFrom, documentId, url, resourceType, method, postData, headers) {
-    super(frame, 'request');
+  constructor(context, frame, serviceWorker, redirectedFrom, documentId, url, resourceType, method, postData, headers) {
+    super(frame || context, 'request');
     this._response = null;
     this._redirectedFrom = void 0;
     this._redirectedTo = null;
@@ -109,17 +109,17 @@ class Request extends _instrumentation.SdkObject {
     this._postData = void 0;
     this._headers = void 0;
     this._headersMap = new Map();
-    this._rawRequestHeadersPromise = void 0;
-    this._frame = void 0;
+    this._frame = null;
+    this._serviceWorker = null;
+    this._context = void 0;
+    this._rawRequestHeadersPromise = new _manualPromise.ManualPromise();
     this._waitForResponsePromise = new _manualPromise.ManualPromise();
     this._responseEndTiming = -1;
-    this.responseSize = {
-      encodedBodySize: 0,
-      transferSize: 0,
-      responseHeadersSize: 0
-    };
+    this._overrides = void 0;
     (0, _utils.assert)(!url.startsWith('data:'), 'Data urls should not fire requests');
+    this._context = context;
     this._frame = frame;
+    this._serviceWorker = serviceWorker;
     this._redirectedFrom = redirectedFrom;
     if (redirectedFrom) redirectedFrom._redirectedTo = this;
     this._documentId = documentId;
@@ -129,10 +129,7 @@ class Request extends _instrumentation.SdkObject {
     this._postData = postData;
     this._headers = headers;
 
-    for (const {
-      name,
-      value
-    } of this._headers) this._headersMap.set(name.toLowerCase(), value);
+    this._updateHeadersMap();
 
     this._isFavicon = url.endsWith('/favicon.ico') || !!(redirectedFrom !== null && redirectedFrom !== void 0 && redirectedFrom._isFavicon);
   }
@@ -143,8 +140,27 @@ class Request extends _instrumentation.SdkObject {
     this._waitForResponsePromise.resolve(null);
   }
 
+  _setOverrides(overrides) {
+    this._overrides = overrides;
+
+    this._updateHeadersMap();
+  }
+
+  _updateHeadersMap() {
+    for (const {
+      name,
+      value
+    } of this.headers()) this._headersMap.set(name.toLowerCase(), value);
+  }
+
+  _hasOverrides() {
+    return !!this._overrides;
+  }
+
   url() {
-    return this._url;
+    var _this$_overrides;
+
+    return ((_this$_overrides = this._overrides) === null || _this$_overrides === void 0 ? void 0 : _this$_overrides.url) || this._url;
   }
 
   resourceType() {
@@ -152,37 +168,36 @@ class Request extends _instrumentation.SdkObject {
   }
 
   method() {
-    return this._method;
+    var _this$_overrides2;
+
+    return ((_this$_overrides2 = this._overrides) === null || _this$_overrides2 === void 0 ? void 0 : _this$_overrides2.method) || this._method;
   }
 
   postDataBuffer() {
-    return this._postData;
+    var _this$_overrides3;
+
+    return ((_this$_overrides3 = this._overrides) === null || _this$_overrides3 === void 0 ? void 0 : _this$_overrides3.postData) || this._postData;
   }
 
   headers() {
-    return this._headers;
+    var _this$_overrides4;
+
+    return ((_this$_overrides4 = this._overrides) === null || _this$_overrides4 === void 0 ? void 0 : _this$_overrides4.headers) || this._headers;
   }
 
   headerValue(name) {
     return this._headersMap.get(name);
-  }
+  } // "null" means no raw headers available - we'll use provisional headers as raw headers.
 
-  setWillReceiveExtraHeaders() {
-    if (!this._rawRequestHeadersPromise) this._rawRequestHeadersPromise = new _manualPromise.ManualPromise();
-  }
 
   setRawRequestHeaders(headers) {
-    if (!this._rawRequestHeadersPromise) this._rawRequestHeadersPromise = new _manualPromise.ManualPromise();
-
-    this._rawRequestHeadersPromise.resolve(headers);
+    if (!this._rawRequestHeadersPromise.isDone()) this._rawRequestHeadersPromise.resolve(headers || this._headers);
   }
 
   async rawRequestHeaders() {
-    return this._rawRequestHeadersPromise || Promise.resolve(this._headers);
-  }
+    var _this$_overrides5;
 
-  rawRequestHeadersPromise() {
-    return this._rawRequestHeadersPromise;
+    return ((_this$_overrides5 = this._overrides) === null || _this$_overrides5 === void 0 ? void 0 : _this$_overrides5.headers) || this._rawRequestHeadersPromise;
   }
 
   response() {
@@ -205,6 +220,10 @@ class Request extends _instrumentation.SdkObject {
 
   frame() {
     return this._frame;
+  }
+
+  serviceWorker() {
+    return this._serviceWorker;
   }
 
   isNavigationRequest() {
@@ -235,7 +254,7 @@ class Request extends _instrumentation.SdkObject {
     headersSize += new URL(this.url()).pathname.length;
     headersSize += 8; // httpVersion
 
-    const headers = this.rawRequestHeadersPromise() ? await this.rawRequestHeadersPromise() : this._headers;
+    const headers = await this.rawRequestHeaders();
 
     for (const header of headers) headersSize += header.name.length + header.value.length + 4; // 4 = ': ' + '\r\n'
 
@@ -249,12 +268,14 @@ exports.Request = Request;
 
 class Route extends _instrumentation.SdkObject {
   constructor(request, delegate) {
-    super(request.frame(), 'route');
+    super(request._frame || request._context, 'route');
     this._request = void 0;
     this._delegate = void 0;
     this._handled = false;
     this._request = request;
     this._delegate = delegate;
+
+    this._request._context.addRouteInFlight(this);
   }
 
   request() {
@@ -265,6 +286,16 @@ class Route extends _instrumentation.SdkObject {
     this._startHandling();
 
     await this._delegate.abort(errorCode);
+
+    this._endHandling();
+  }
+
+  async redirectNavigationRequest(url) {
+    this._startHandling();
+
+    (0, _utils.assert)(this._request.isNavigationRequest());
+
+    this._request.frame().redirectNavigation(url, this._request._documentId, this._request.headerValue('referer'));
   }
 
   async fulfill(overrides) {
@@ -275,9 +306,7 @@ class Route extends _instrumentation.SdkObject {
 
     if (body === undefined) {
       if (overrides.fetchResponseUid) {
-        const context = this._request.frame()._page._browserContext;
-
-        const buffer = context.fetchRequest.fetchResponses.get(overrides.fetchResponseUid) || _fetch.APIRequestContext.findResponseBody(overrides.fetchResponseUid);
+        const buffer = this._request._context.fetchRequest.fetchResponses.get(overrides.fetchResponseUid) || _fetch.APIRequestContext.findResponseBody(overrides.fetchResponseUid);
 
         (0, _utils.assert)(buffer, 'Fetch response has been disposed');
         body = buffer.toString('base64');
@@ -298,6 +327,8 @@ class Route extends _instrumentation.SdkObject {
       body,
       isBase64
     });
+
+    this._endHandling();
   } // See https://github.com/microsoft/playwright/issues/12929
 
 
@@ -335,7 +366,11 @@ class Route extends _instrumentation.SdkObject {
       if (oldUrl.protocol !== newUrl.protocol) throw new Error('New URL must have same protocol as overridden URL');
     }
 
+    this._request._setOverrides(overrides);
+
     await this._delegate.continue(this._request, overrides);
+
+    this._endHandling();
   }
 
   _startHandling() {
@@ -343,13 +378,17 @@ class Route extends _instrumentation.SdkObject {
     this._handled = true;
   }
 
+  _endHandling() {
+    this._request._context.removeRouteInFlight(this);
+  }
+
 }
 
 exports.Route = Route;
 
 class Response extends _instrumentation.SdkObject {
-  constructor(request, status, statusText, headers, timing, getResponseBodyCallback, httpVersion) {
-    super(request.frame(), 'response');
+  constructor(request, status, statusText, headers, timing, getResponseBodyCallback, fromServiceWorker, httpVersion) {
+    super(request.frame() || request._context, 'response');
     this._request = void 0;
     this._contentPromise = null;
     this._finishedPromise = new _manualPromise.ManualPromise();
@@ -362,8 +401,12 @@ class Response extends _instrumentation.SdkObject {
     this._timing = void 0;
     this._serverAddrPromise = new _manualPromise.ManualPromise();
     this._securityDetailsPromise = new _manualPromise.ManualPromise();
-    this._rawResponseHeadersPromise = void 0;
+    this._rawResponseHeadersPromise = new _manualPromise.ManualPromise();
     this._httpVersion = void 0;
+    this._fromServiceWorker = void 0;
+    this._encodedBodySizePromise = new _manualPromise.ManualPromise();
+    this._transferSizePromise = new _manualPromise.ManualPromise();
+    this._responseHeadersSizePromise = new _manualPromise.ManualPromise();
     this._request = request;
     this._timing = timing;
     this._status = status;
@@ -381,6 +424,7 @@ class Response extends _instrumentation.SdkObject {
     this._request._setResponse(this);
 
     this._httpVersion = httpVersion;
+    this._fromServiceWorker = fromServiceWorker;
   }
 
   _serverAddrFinished(addr) {
@@ -422,19 +466,24 @@ class Response extends _instrumentation.SdkObject {
   }
 
   async rawResponseHeaders() {
-    return this._rawResponseHeadersPromise || Promise.resolve(this._headers);
-  }
+    return this._rawResponseHeadersPromise;
+  } // "null" means no raw headers available - we'll use provisional headers as raw headers.
 
-  setWillReceiveExtraHeaders() {
-    this._request.setWillReceiveExtraHeaders();
-
-    this._rawResponseHeadersPromise = new _manualPromise.ManualPromise();
-  }
 
   setRawResponseHeaders(headers) {
-    if (!this._rawResponseHeadersPromise) this._rawResponseHeadersPromise = new _manualPromise.ManualPromise();
+    if (!this._rawResponseHeadersPromise.isDone()) this._rawResponseHeadersPromise.resolve(headers || this._headers);
+  }
 
-    this._rawResponseHeadersPromise.resolve(headers);
+  setTransferSize(size) {
+    this._transferSizePromise.resolve(size);
+  }
+
+  setEncodedBodySize(size) {
+    this._encodedBodySizePromise.resolve(size);
+  }
+
+  setResponseHeadersSize(size) {
+    this._responseHeadersSizePromise.resolve(size);
   }
 
   timing() {
@@ -475,8 +524,14 @@ class Response extends _instrumentation.SdkObject {
     return this._httpVersion;
   }
 
-  async _responseHeadersSize() {
-    if (this._request.responseSize.responseHeadersSize) return this._request.responseSize.responseHeadersSize;
+  fromServiceWorker() {
+    return this._fromServiceWorker;
+  }
+
+  async responseHeadersSize() {
+    const availableSize = await this._responseHeadersSizePromise;
+    if (availableSize !== null) return availableSize; // Fallback to calculating it manually.
+
     let headersSize = 4; // 4 = 2 spaces + 2 line breaks (HTTP/1.1 200 Ok\r\n)
 
     headersSize += 8; // httpVersion;
@@ -484,7 +539,7 @@ class Response extends _instrumentation.SdkObject {
     headersSize += 3; // statusCode;
 
     headersSize += this.statusText().length;
-    const headers = await this._bestEffortResponseHeaders();
+    const headers = await this._rawResponseHeadersPromise;
 
     for (const header of headers) headersSize += header.name.length + header.value.length + 4; // 4 = ': ' + '\r\n'
 
@@ -494,31 +549,33 @@ class Response extends _instrumentation.SdkObject {
     return headersSize;
   }
 
-  async _bestEffortResponseHeaders() {
-    return this._rawResponseHeadersPromise ? await this._rawResponseHeadersPromise : this._headers;
-  }
-
   async sizes() {
-    await this._finishedPromise;
     const requestHeadersSize = await this._request.requestHeadersSize();
-    const responseHeadersSize = await this._responseHeadersSize();
-    let {
-      encodedBodySize
-    } = this._request.responseSize;
+    const responseHeadersSize = await this.responseHeadersSize();
+    let encodedBodySize = await this._encodedBodySizePromise;
 
-    if (!encodedBodySize) {
+    if (encodedBodySize === null) {
       var _headers$find;
 
-      const headers = await this._bestEffortResponseHeaders();
+      // Fallback to calculating it manually.
+      const headers = await this._rawResponseHeadersPromise;
       const contentLength = (_headers$find = headers.find(h => h.name.toLowerCase() === 'content-length')) === null || _headers$find === void 0 ? void 0 : _headers$find.value;
       encodedBodySize = contentLength ? +contentLength : 0;
+    }
+
+    let transferSize = await this._transferSizePromise;
+
+    if (transferSize === null) {
+      // Fallback to calculating it manually.
+      transferSize = responseHeadersSize + encodedBodySize;
     }
 
     return {
       requestBodySize: this._request.bodySize(),
       requestHeadersSize,
       responseBodySize: encodedBodySize,
-      responseHeadersSize
+      responseHeadersSize,
+      transferSize
     };
   }
 

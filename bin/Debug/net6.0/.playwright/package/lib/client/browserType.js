@@ -46,6 +46,7 @@ class BrowserType extends _channelOwner.ChannelOwner {
     this._playwright = void 0;
     this._defaultContextOptions = void 0;
     this._defaultLaunchOptions = void 0;
+    this._defaultConnectOptions = void 0;
     this._onDidCreateContext = void 0;
     this._onWillCloseContext = void 0;
   }
@@ -66,6 +67,7 @@ class BrowserType extends _channelOwner.ChannelOwner {
   async launch(options = {}) {
     var _this$_defaultLaunchO;
 
+    if (this._defaultConnectOptions) return await this._connectInsteadOfLaunching();
     const logger = options.logger || ((_this$_defaultLaunchO = this._defaultLaunchOptions) === null || _this$_defaultLaunchO === void 0 ? void 0 : _this$_defaultLaunchO.logger);
     (0, _utils.assert)(!options.userDataDir, 'userDataDir option is not supported in `browserType.launch`. Use `browserType.launchPersistentContext` instead');
     (0, _utils.assert)(!options.port, 'Cannot specify a port without launching as a server.');
@@ -84,8 +86,22 @@ class BrowserType extends _channelOwner.ChannelOwner {
 
     browser._setBrowserType(this);
 
-    browser._localUtils = this._playwright._utils;
     return browser;
+  }
+
+  async _connectInsteadOfLaunching() {
+    var _connectOptions$timeo;
+
+    const connectOptions = this._defaultConnectOptions;
+    return this._connect(connectOptions.wsEndpoint, {
+      headers: {
+        'x-playwright-browser': this.name(),
+        'x-playwright-launch-options': JSON.stringify(this._defaultLaunchOptions || {}),
+        ...connectOptions.headers
+      },
+      timeout: (_connectOptions$timeo = connectOptions.timeout) !== null && _connectOptions$timeo !== void 0 ? _connectOptions$timeo : 3 * 60 * 1000 // 3 minutes
+
+    });
   }
 
   async launchServer(options = {}) {
@@ -122,7 +138,6 @@ class BrowserType extends _channelOwner.ChannelOwner {
 
     context._setBrowserType(this);
 
-    context.tracing._localUtils = this._playwright._utils;
     await ((_this$_onDidCreateCon = this._onDidCreateContext) === null || _this$_onDidCreateCon === void 0 ? void 0 : _this$_onDidCreateCon.call(this, context));
     return context;
   }
@@ -155,7 +170,7 @@ class BrowserType extends _channelOwner.ChannelOwner {
 
       const closePipe = () => pipe.close().catch(() => {});
 
-      const connection = new _connection.Connection();
+      const connection = new _connection.Connection(this._connection.localUtils());
       connection.markAsRemote();
       connection.on('close', closePipe);
       let closeError;
@@ -210,7 +225,6 @@ class BrowserType extends _channelOwner.ChannelOwner {
 
         browser._setBrowserType(this);
 
-        browser._localUtils = this._playwright._utils;
         browser.on(_events.Events.Browser.Disconnected, closePipe);
         return browser;
       }, deadline ? deadline - (0, _utils.monotonicTime)() : 0);
@@ -248,7 +262,6 @@ class BrowserType extends _channelOwner.ChannelOwner {
 
     browser._setBrowserType(this);
 
-    browser._localUtils = this._playwright._utils;
     return browser;
   }
 

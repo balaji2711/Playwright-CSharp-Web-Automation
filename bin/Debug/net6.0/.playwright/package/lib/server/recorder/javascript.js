@@ -35,11 +35,12 @@ function _interopRequireDefault(obj) { return obj && obj.__esModule ? obj : { de
 class JavaScriptLanguageGenerator {
   constructor(isTest) {
     this.id = void 0;
-    this.fileName = void 0;
+    this.groupName = 'Node.js';
+    this.name = void 0;
     this.highlighter = 'javascript';
     this._isTest = void 0;
     this.id = isTest ? 'test' : 'javascript';
-    this.fileName = isTest ? 'Playwright Test' : 'JavaScript';
+    this.name = isTest ? 'Test Runner' : 'Library';
     this._isTest = isTest;
   }
 
@@ -83,7 +84,7 @@ class JavaScriptLanguageGenerator {
   });`);
     }
 
-    const emitPromiseAll = signals.waitForNavigation || signals.popup || signals.download;
+    const emitPromiseAll = signals.popup || signals.download;
 
     if (emitPromiseAll) {
       // Generate either await Promise.all([]) or
@@ -94,22 +95,20 @@ class JavaScriptLanguageGenerator {
     } // Popup signals.
 
 
-    if (signals.popup) formatter.add(`${pageAlias}.waitForEvent('popup'),`); // Navigation signal.
-
-    if (signals.waitForNavigation) formatter.add(`${pageAlias}.waitForNavigation(/*{ url: ${quote(signals.waitForNavigation.url)} }*/),`); // Download signals.
+    if (signals.popup) formatter.add(`${pageAlias}.waitForEvent('popup'),`); // Download signals.
 
     if (signals.download) formatter.add(`${pageAlias}.waitForEvent('download'),`);
-    const prefix = signals.popup || signals.waitForNavigation || signals.download ? '' : 'await ';
+    const prefix = signals.popup || signals.download ? '' : 'await ';
 
     const actionCall = this._generateActionCall(action);
 
-    const suffix = signals.waitForNavigation || emitPromiseAll ? '' : ';';
+    const suffix = emitPromiseAll ? '' : ';';
     formatter.add(`${prefix}${subject}.${actionCall}${suffix}`);
 
     if (emitPromiseAll) {
       formatter.add(`]);`);
     } else if (signals.assertNavigation) {
-      if (this._isTest) formatter.add(`  await expect(${pageAlias}).toHaveURL(${quote(signals.assertNavigation.url)});`);else formatter.add(`  // assert.equal(${pageAlias}.url(), ${quote(signals.assertNavigation.url)});`);
+      if (this._isTest) formatter.add(`await expect(${pageAlias}).toHaveURL(${quote(signals.assertNavigation.url)});`);else formatter.add(`await ${pageAlias}.waitForURL(${quote(signals.assertNavigation.url)});`);
     }
 
     return formatter.format();
@@ -229,7 +228,7 @@ function formatObject(value, indent = '  ') {
   if (Array.isArray(value)) return `[${value.map(o => formatObject(o)).join(', ')}]`;
 
   if (typeof value === 'object') {
-    const keys = Object.keys(value);
+    const keys = Object.keys(value).filter(key => value[key] !== undefined).sort();
     if (!keys.length) return '{}';
     const tokens = [];
 

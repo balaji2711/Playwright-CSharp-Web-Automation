@@ -5,19 +5,33 @@ Object.defineProperty(exports, "__esModule", {
 });
 exports.Page = exports.BindingCall = void 0;
 
-var _events = require("./events");
+var _fs = _interopRequireDefault(require("fs"));
 
-var _utils = require("../utils");
+var _path = _interopRequireDefault(require("path"));
+
+var _errors = require("../common/errors");
+
+var _netUtils = require("../common/netUtils");
 
 var _timeoutSettings = require("../common/timeoutSettings");
 
 var _serializers = require("../protocol/serializers");
 
+var _utils = require("../utils");
+
+var _fileUtils = require("../utils/fileUtils");
+
 var _accessibility = require("./accessibility");
+
+var _artifact = require("./artifact");
 
 var _channelOwner = require("./channelOwner");
 
+var _clientHelper = require("./clientHelper");
+
 var _consoleMessage = require("./consoleMessage");
+
+var _coverage = require("./coverage");
 
 var _dialog = require("./dialog");
 
@@ -25,9 +39,13 @@ var _download = require("./download");
 
 var _elementHandle = require("./elementHandle");
 
-var _worker = require("./worker");
+var _events = require("./events");
+
+var _fileChooser = require("./fileChooser");
 
 var _frame = require("./frame");
+
+var _harRouter = require("./harRouter");
 
 var _input = require("./input");
 
@@ -35,27 +53,11 @@ var _jsHandle = require("./jsHandle");
 
 var _network = require("./network");
 
-var _fileChooser = require("./fileChooser");
-
-var _buffer = require("buffer");
-
-var _coverage = require("./coverage");
+var _video = require("./video");
 
 var _waiter = require("./waiter");
 
-var _fs = _interopRequireDefault(require("fs"));
-
-var _path = _interopRequireDefault(require("path"));
-
-var _clientHelper = require("./clientHelper");
-
-var _fileUtils = require("../utils/fileUtils");
-
-var _errors = require("../common/errors");
-
-var _video = require("./video");
-
-var _artifact = require("./artifact");
+var _worker = require("./worker");
 
 function _interopRequireDefault(obj) { return obj && obj.__esModule ? obj : { default: obj }; }
 
@@ -143,8 +145,6 @@ class Page extends _channelOwner.ChannelOwner {
       }
     });
 
-    this._channel.on('domcontentloaded', () => this.emit(_events.Events.Page.DOMContentLoaded, this));
-
     this._channel.on('download', ({
       url,
       suggestedFilename,
@@ -168,16 +168,13 @@ class Page extends _channelOwner.ChannelOwner {
       frame
     }) => this._onFrameDetached(_frame.Frame.from(frame)));
 
-    this._channel.on('load', () => this.emit(_events.Events.Page.Load, this));
-
     this._channel.on('pageError', ({
       error
     }) => this.emit(_events.Events.Page.PageError, (0, _serializers.parseError)(error)));
 
     this._channel.on('route', ({
-      route,
-      request
-    }) => this._onRoute(_network.Route.from(route), _network.Request.from(request)));
+      route
+    }) => this._onRoute(_network.Route.from(route)));
 
     this._channel.on('video', ({
       artifact
@@ -216,24 +213,18 @@ class Page extends _channelOwner.ChannelOwner {
     this.emit(_events.Events.Page.FrameDetached, frame);
   }
 
-  _onRoute(route, request) {
-    for (const routeHandler of this._routes) {
-      if (routeHandler.matches(request.url())) {
-        try {
-          routeHandler.handle(route, request);
-        } finally {
-          if (!routeHandler.isActive()) {
-            this._routes.splice(this._routes.indexOf(routeHandler), 1);
+  async _onRoute(route) {
+    const routeHandlers = this._routes.slice();
 
-            if (!this._routes.length) this._wrapApiCall(() => this._disableInterception(), true).catch(() => {});
-          }
-        }
-
-        return;
-      }
+    for (const routeHandler of routeHandlers) {
+      if (!routeHandler.matches(route.request().url())) continue;
+      if (routeHandler.willExpire()) this._routes.splice(this._routes.indexOf(routeHandler), 1);
+      const handled = await routeHandler.handle(route);
+      if (!this._routes.length) this._wrapApiCall(() => this._disableInterception(), true).catch(() => {});
+      if (handled) return;
     }
 
-    this._browserContext._onRoute(route, request);
+    await this._browserContext._onRoute(route);
   }
 
   async _onBinding(bindingCall) {
@@ -287,7 +278,7 @@ class Page extends _channelOwner.ChannelOwner {
     (0, _utils.assert)(name || url, 'Either name or url matcher should be specified');
     return this.frames().find(f => {
       if (name) return f.name() === name;
-      return (0, _clientHelper.urlMatches)(this._browserContext._options.baseURL, f.url(), url);
+      return (0, _netUtils.urlMatches)(this._browserContext._options.baseURL, f.url(), url);
     }) || null;
   }
 
@@ -301,7 +292,7 @@ class Page extends _channelOwner.ChannelOwner {
     this._wrapApiCall(async () => {
       this._channel.setDefaultNavigationTimeoutNoReply({
         timeout
-      });
+      }).catch(() => {});
     }, true);
   }
 
@@ -311,7 +302,7 @@ class Page extends _channelOwner.ChannelOwner {
     this._wrapApiCall(async () => {
       this._channel.setDefaultTimeoutNoReply({
         timeout
-      });
+      }).catch(() => {});
     }, true);
   }
 
@@ -386,14 +377,6 @@ class Page extends _channelOwner.ChannelOwner {
     this._bindings.set(name, callback);
   }
 
-  async _removeExposedBindings() {
-    for (const key of this._bindings.keys()) {
-      if (!key.startsWith('__pw_')) this._bindings.delete(key);
-    }
-
-    await this._channel.removeExposedBindings();
-  }
-
   async setExtraHTTPHeaders(headers) {
     (0, _network.validateHeaders)(headers);
     await this._channel.setExtraHTTPHeaders({
@@ -438,7 +421,7 @@ class Page extends _channelOwner.ChannelOwner {
 
   async waitForRequest(urlOrPredicate, options = {}) {
     const predicate = request => {
-      if ((0, _utils.isString)(urlOrPredicate) || (0, _utils.isRegExp)(urlOrPredicate)) return (0, _clientHelper.urlMatches)(this._browserContext._options.baseURL, request.url(), urlOrPredicate);
+      if ((0, _utils.isString)(urlOrPredicate) || (0, _utils.isRegExp)(urlOrPredicate)) return (0, _netUtils.urlMatches)(this._browserContext._options.baseURL, request.url(), urlOrPredicate);
       return urlOrPredicate(request);
     };
 
@@ -452,7 +435,7 @@ class Page extends _channelOwner.ChannelOwner {
 
   async waitForResponse(urlOrPredicate, options = {}) {
     const predicate = response => {
-      if ((0, _utils.isString)(urlOrPredicate) || (0, _utils.isRegExp)(urlOrPredicate)) return (0, _clientHelper.urlMatches)(this._browserContext._options.baseURL, response.url(), urlOrPredicate);
+      if ((0, _utils.isString)(urlOrPredicate) || (0, _utils.isRegExp)(urlOrPredicate)) return (0, _netUtils.urlMatches)(this._browserContext._options.baseURL, response.url(), urlOrPredicate);
       return urlOrPredicate(response);
     };
 
@@ -532,10 +515,6 @@ class Page extends _channelOwner.ChannelOwner {
     });
   }
 
-  async _removeInitScripts() {
-    await this._channel.removeInitScripts();
-  }
-
   async route(url, handler, options = {}) {
     this._routes.unshift(new _network.RouteHandler(this._browserContext._options.baseURL, url, handler, options.times));
 
@@ -544,14 +523,21 @@ class Page extends _channelOwner.ChannelOwner {
     });
   }
 
+  async routeFromHAR(har, options = {}) {
+    if (options.update) {
+      await this._browserContext._recordIntoHAR(har, this, options);
+      return;
+    }
+
+    const harRouter = await _harRouter.HarRouter.create(this._connection.localUtils(), har, options.notFound || 'abort', {
+      urlMatch: options.url
+    });
+    harRouter.addPageRoute(this);
+  }
+
   async unroute(url, handler) {
     this._routes = this._routes.filter(route => route.url !== url || handler && route.handler !== handler);
     if (!this._routes.length) await this._disableInterception();
-  }
-
-  async _unrouteAll() {
-    this._routes = [];
-    await this._disableInterception();
   }
 
   async _disableInterception() {
@@ -575,14 +561,12 @@ class Page extends _channelOwner.ChannelOwner {
 
     const result = await this._channel.screenshot(copy);
 
-    const buffer = _buffer.Buffer.from(result.binary, 'base64');
-
     if (options.path) {
       await (0, _fileUtils.mkdirIfNeeded)(options.path);
-      await _fs.default.promises.writeFile(options.path, buffer);
+      await _fs.default.promises.writeFile(options.path, result.binary);
     }
 
-    return buffer;
+    return result.binary;
   }
 
   async _expectScreenshot(customStackTrace, options) {
@@ -597,22 +581,13 @@ class Page extends _channelOwner.ChannelOwner {
         frame: options.locator._frame._channel,
         selector: options.locator._selector
       } : undefined;
-      const expected = options.expected ? options.expected.toString('base64') : undefined;
-      const result = await this._channel.expectScreenshot({ ...options,
+      return await this._channel.expectScreenshot({ ...options,
         isNot: !!options.isNot,
-        expected,
         locator,
         screenshotOptions: { ...options.screenshotOptions,
           mask
         }
       });
-      return {
-        log: result.log,
-        actual: result.actual ? _buffer.Buffer.from(result.actual, 'base64') : undefined,
-        previous: result.previous ? _buffer.Buffer.from(result.previous, 'base64') : undefined,
-        diff: result.diff ? _buffer.Buffer.from(result.diff, 'base64') : undefined,
-        errorMessage: result.errorMessage
-      };
     }, false
     /* isInternal */
     , customStackTrace);
@@ -777,6 +752,14 @@ class Page extends _channelOwner.ChannelOwner {
     return this;
   }
 
+  prependListener(event, listener) {
+    if (event === _events.Events.Page.FileChooser && !this.listenerCount(event)) this._channel.setFileChooserInterceptedNoReply({
+      intercepted: true
+    });
+    super.prependListener(event, listener);
+    return this;
+  }
+
   off(event, listener) {
     super.off(event, listener);
     if (event === _events.Events.Page.FileChooser && !this.listenerCount(event)) this._channel.setFileChooserInterceptedNoReply({
@@ -812,22 +795,14 @@ class Page extends _channelOwner.ChannelOwner {
 
     const result = await this._channel.pdf(transportOptions);
 
-    const buffer = _buffer.Buffer.from(result.pdf, 'base64');
-
     if (options.path) {
       await _fs.default.promises.mkdir(_path.default.dirname(options.path), {
         recursive: true
       });
-      await _fs.default.promises.writeFile(options.path, buffer);
+      await _fs.default.promises.writeFile(options.path, result.pdf);
     }
 
-    return buffer;
-  }
-
-  async _resetForReuse() {
-    await this._unrouteAll();
-    await this._removeInitScripts();
-    await this._removeExposedBindings();
+    return result.pdf;
   }
 
 }

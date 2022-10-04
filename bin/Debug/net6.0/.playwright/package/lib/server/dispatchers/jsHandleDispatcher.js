@@ -55,14 +55,14 @@ class JSHandleDispatcher extends _dispatcher.Dispatcher {
     /* returnByValue */
     , parseArgument(params.arg));
     return {
-      handle: _elementHandlerDispatcher.ElementHandleDispatcher.fromJSHandle(this._scope, jsHandle)
+      handle: _elementHandlerDispatcher.ElementHandleDispatcher.fromJSHandle(this.parentScope(), jsHandle)
     };
   }
 
   async getProperty(params) {
     const jsHandle = await this._object.getProperty(params.name);
     return {
-      handle: _elementHandlerDispatcher.ElementHandleDispatcher.fromJSHandle(this._scope, jsHandle)
+      handle: _elementHandlerDispatcher.ElementHandleDispatcher.fromJSHandle(this.parentScope(), jsHandle)
     };
   }
 
@@ -72,7 +72,7 @@ class JSHandleDispatcher extends _dispatcher.Dispatcher {
 
     for (const [name, value] of map) properties.push({
       name,
-      value: _elementHandlerDispatcher.ElementHandleDispatcher.fromJSHandle(this._scope, value)
+      value: _elementHandlerDispatcher.ElementHandleDispatcher.fromJSHandle(this.parentScope(), value)
     });
 
     return {

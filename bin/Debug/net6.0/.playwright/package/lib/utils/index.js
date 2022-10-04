@@ -11,7 +11,6 @@ exports.createGuid = createGuid;
 exports.debugAssert = debugAssert;
 exports.debugMode = debugMode;
 exports.deepCopy = deepCopy;
-exports.experimentalFeaturesEnabled = experimentalFeaturesEnabled;
 exports.getAsBooleanFromENV = getAsBooleanFromENV;
 exports.getFromENV = getFromENV;
 exports.headersArrayToObject = headersArrayToObject;
@@ -137,10 +136,6 @@ function setUnderTest() {
 
 function isUnderTest() {
   return _isUnderTest;
-}
-
-function experimentalFeaturesEnabled() {
-  return isUnderTest() || !!process.env.PLAYWRIGHT_EXPERIMENTAL_FEATURES;
 }
 
 function getFromENV(name) {

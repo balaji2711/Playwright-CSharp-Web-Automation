@@ -52,7 +52,7 @@ class MultipartFormData {
 
     this._finishMultiPartHeader();
 
-    this._chunks.push(Buffer.from(value.buffer, 'base64'));
+    this._chunks.push(value.buffer);
 
     this._finishMultiPartField();
   }

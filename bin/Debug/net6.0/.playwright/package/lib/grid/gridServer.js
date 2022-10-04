@@ -333,8 +333,7 @@ class GridServer {
         }
 
         agent.createWorker(ws, {
-          browserAlias: request.headers['x-playwright-browser'],
-          headless: request.headers['x-playwright-headless'] !== '0'
+          browserName: request.headers['x-playwright-browser']
         });
         return;
       }

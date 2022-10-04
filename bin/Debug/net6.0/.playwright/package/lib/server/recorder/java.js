@@ -37,7 +37,8 @@ function _interopRequireDefault(obj) { return obj && obj.__esModule ? obj : { de
 class JavaLanguageGenerator {
   constructor() {
     this.id = 'java';
-    this.fileName = 'Java';
+    this.groupName = 'Java';
+    this.name = 'Library';
     this.highlighter = 'java';
   }
 
@@ -92,16 +93,8 @@ class JavaLanguageGenerator {
       });`;
     }
 
-    if (signals.waitForNavigation) {
-      code = `
-      // ${pageAlias}.waitForNavigation(new Page.WaitForNavigationOptions().setUrl(${quote(signals.waitForNavigation.url)}), () ->
-      ${pageAlias}.waitForNavigation(() -> {
-        ${code}
-      });`;
-    }
-
     formatter.add(code);
-    if (signals.assertNavigation) formatter.add(`// assertThat(${pageAlias}).hasURL(${quote(signals.assertNavigation.url)});`);
+    if (signals.assertNavigation) formatter.add(`assertThat(${pageAlias}).hasURL(${quote(signals.assertNavigation.url)});`);
     return formatter.format();
   }
 
@@ -201,14 +194,16 @@ function formatSelectOption(options) {
 
 function formatLaunchOptions(options) {
   const lines = [];
-  if (!Object.keys(options).length) return '';
+  if (!Object.keys(options).filter(key => options[key] !== undefined).length) return '';
   lines.push('new BrowserType.LaunchOptions()');
-  if (typeof options.headless === 'boolean') lines.push(`  .setHeadless(false)`);
   if (options.channel) lines.push(`  .setChannel(${quote(options.channel)})`);
+  if (typeof options.headless === 'boolean') lines.push(`  .setHeadless(false)`);
   return lines.join('\n');
 }
 
 function formatContextOptions(contextOptions, deviceName) {
+  var _options$recordHar, _options$recordHar2, _options$recordHar3, _options$recordHar4, _options$recordHar5, _options$recordHar6, _options$recordHar7;
+
   const lines = [];
   if (!Object.keys(contextOptions).length && !deviceName) return '';
   const device = deviceName ? _deviceDescriptors.default[deviceName] : {};
@@ -225,6 +220,12 @@ function formatContextOptions(contextOptions, deviceName) {
   if (options.isMobile) lines.push(`  .setIsMobile(${options.isMobile})`);
   if (options.locale) lines.push(`  .setLocale(${quote(options.locale)})`);
   if (options.proxy) lines.push(`  .setProxy(new Proxy(${quote(options.proxy.server)}))`);
+  if ((_options$recordHar = options.recordHar) !== null && _options$recordHar !== void 0 && _options$recordHar.content) lines.push(`  .setRecordHarContent(HarContentPolicy.${(_options$recordHar2 = options.recordHar) === null || _options$recordHar2 === void 0 ? void 0 : _options$recordHar2.content.toUpperCase()})`);
+  if ((_options$recordHar3 = options.recordHar) !== null && _options$recordHar3 !== void 0 && _options$recordHar3.mode) lines.push(`  .setRecordHarMode(HarMode.${(_options$recordHar4 = options.recordHar) === null || _options$recordHar4 === void 0 ? void 0 : _options$recordHar4.mode.toUpperCase()})`);
+  if ((_options$recordHar5 = options.recordHar) !== null && _options$recordHar5 !== void 0 && _options$recordHar5.omitContent) lines.push(`  .setRecordHarOmitContent(true)`);
+  if ((_options$recordHar6 = options.recordHar) !== null && _options$recordHar6 !== void 0 && _options$recordHar6.path) lines.push(`  .setRecordHarPath(Paths.get(${quote(options.recordHar.path)}))`);
+  if ((_options$recordHar7 = options.recordHar) !== null && _options$recordHar7 !== void 0 && _options$recordHar7.urlFilter) lines.push(`  .setRecordHarUrlFilter(${quote(options.recordHar.urlFilter)})`);
+  if (options.serviceWorkers) lines.push(`  .setServiceWorkers(ServiceWorkerPolicy.${options.serviceWorkers.toUpperCase()})`);
   if (options.storageState) lines.push(`  .setStorageStatePath(Paths.get(${quote(options.storageState)}))`);
   if (options.timezoneId) lines.push(`  .setTimezoneId(${quote(options.timezoneId)})`);
   if (options.userAgent) lines.push(`  .setUserAgent(${quote(options.userAgent)})`);

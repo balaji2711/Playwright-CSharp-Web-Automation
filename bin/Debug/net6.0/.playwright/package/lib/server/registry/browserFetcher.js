@@ -40,7 +40,7 @@ function _interopRequireDefault(obj) { return obj && obj.__esModule ? obj : { de
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-async function downloadBrowserWithProgressBar(title, browserDirectory, executablePath, downloadURL, downloadFileName) {
+async function downloadBrowserWithProgressBar(title, browserDirectory, executablePath, downloadURLs, downloadFileName) {
   if (await (0, _fileUtils.existsAsync)(browserDirectory)) {
     // Already downloaded.
     _debugLogger.debugLogger.log('install', `${title} is already downloaded.`);
@@ -48,12 +48,10 @@ async function downloadBrowserWithProgressBar(title, browserDirectory, executabl
     return false;
   }
 
-  const url = downloadURL;
-
   const zipPath = _path.default.join(_os.default.tmpdir(), downloadFileName);
 
   try {
-    await (0, _download.download)(url, zipPath, {
+    await (0, _download.download)(downloadURLs, zipPath, {
       progressBarName: title,
       log: _debugLogger.debugLogger.log.bind(_debugLogger.debugLogger, 'install'),
       userAgent: (0, _userAgent.getUserAgent)()

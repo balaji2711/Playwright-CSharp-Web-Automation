@@ -52,29 +52,30 @@ class FrameDispatcher extends _dispatcher.Dispatcher {
       url: frame.url(),
       name: frame.name(),
       parentFrame: FrameDispatcher.fromNullable(scope, frame.parentFrame()),
-      loadStates: Array.from(frame._subtreeLifecycleEvents)
+      loadStates: Array.from(frame._firedLifecycleEvents)
     });
     this._type_Frame = true;
     this._frame = void 0;
     this._frame = frame;
-    frame.on(_frames.Frame.Events.AddLifecycle, lifecycleEvent => {
+    this.addObjectListener(_frames.Frame.Events.AddLifecycle, lifecycleEvent => {
       this._dispatchEvent('loadstate', {
         add: lifecycleEvent
       });
     });
-    frame.on(_frames.Frame.Events.RemoveLifecycle, lifecycleEvent => {
+    this.addObjectListener(_frames.Frame.Events.RemoveLifecycle, lifecycleEvent => {
       this._dispatchEvent('loadstate', {
         remove: lifecycleEvent
       });
     });
-    frame.on(_frames.Frame.Events.Navigation, event => {
+    this.addObjectListener(_frames.Frame.Events.InternalNavigation, event => {
+      if (!event.isPublic) return;
       const params = {
         url: event.url,
         name: event.name,
         error: event.error ? event.error.message : undefined
       };
       if (event.newDocument) params.newDocument = {
-        request: _networkDispatchers.RequestDispatcher.fromNullable(this._scope, event.newDocument.request || null)
+        request: _networkDispatchers.RequestDispatcher.fromNullable(scope.parentScope(), event.newDocument.request || null)
       };
 
       this._dispatchEvent('navigated', params);
@@ -89,7 +90,7 @@ class FrameDispatcher extends _dispatcher.Dispatcher {
 
   async frameElement() {
     return {
-      element: _elementHandlerDispatcher.ElementHandleDispatcher.from(this._scope, await this._frame.frameElement())
+      element: _elementHandlerDispatcher.ElementHandleDispatcher.from(this.parentScope(), await this._frame.frameElement())
     };
   }
 
@@ -101,13 +102,13 @@ class FrameDispatcher extends _dispatcher.Dispatcher {
 
   async evaluateExpressionHandle(params, metadata) {
     return {
-      handle: _elementHandlerDispatcher.ElementHandleDispatcher.fromJSHandle(this._scope, await this._frame.evaluateExpressionHandleAndWaitForSignals(params.expression, params.isFunction, (0, _jsHandleDispatcher.parseArgument)(params.arg), 'main'))
+      handle: _elementHandlerDispatcher.ElementHandleDispatcher.fromJSHandle(this.parentScope(), await this._frame.evaluateExpressionHandleAndWaitForSignals(params.expression, params.isFunction, (0, _jsHandleDispatcher.parseArgument)(params.arg), 'main'))
     };
   }
 
   async waitForSelector(params, metadata) {
     return {
-      element: _elementHandlerDispatcher.ElementHandleDispatcher.fromNullable(this._scope, await this._frame.waitForSelector(metadata, params.selector, params))
+      element: _elementHandlerDispatcher.ElementHandleDispatcher.fromNullable(this.parentScope(), await this._frame.waitForSelector(metadata, params.selector, params))
     };
   }
 
@@ -129,14 +130,14 @@ class FrameDispatcher extends _dispatcher.Dispatcher {
 
   async querySelector(params, metadata) {
     return {
-      element: _elementHandlerDispatcher.ElementHandleDispatcher.fromNullable(this._scope, await this._frame.querySelector(params.selector, params))
+      element: _elementHandlerDispatcher.ElementHandleDispatcher.fromNullable(this.parentScope(), await this._frame.querySelector(params.selector, params))
     };
   }
 
   async querySelectorAll(params, metadata) {
     const elements = await this._frame.querySelectorAll(params.selector);
     return {
-      elements: elements.map(e => _elementHandlerDispatcher.ElementHandleDispatcher.from(this._scope, e))
+      elements: elements.map(e => _elementHandlerDispatcher.ElementHandleDispatcher.from(this.parentScope(), e))
     };
   }
 
@@ -158,13 +159,13 @@ class FrameDispatcher extends _dispatcher.Dispatcher {
 
   async addScriptTag(params, metadata) {
     return {
-      element: _elementHandlerDispatcher.ElementHandleDispatcher.from(this._scope, await this._frame.addScriptTag(params))
+      element: _elementHandlerDispatcher.ElementHandleDispatcher.from(this.parentScope(), await this._frame.addScriptTag(params))
     };
   }
 
   async addStyleTag(params, metadata) {
     return {
-      element: _elementHandlerDispatcher.ElementHandleDispatcher.from(this._scope, await this._frame.addStyleTag(params))
+      element: _elementHandlerDispatcher.ElementHandleDispatcher.from(this.parentScope(), await this._frame.addStyleTag(params))
     };
   }
 
@@ -317,7 +318,7 @@ class FrameDispatcher extends _dispatcher.Dispatcher {
 
   async waitForFunction(params, metadata) {
     return {
-      handle: _elementHandlerDispatcher.ElementHandleDispatcher.fromJSHandle(this._scope, await this._frame._waitForFunctionExpression(metadata, params.expression, params.isFunction, (0, _jsHandleDispatcher.parseArgument)(params.arg), params))
+      handle: _elementHandlerDispatcher.ElementHandleDispatcher.fromJSHandle(this.parentScope(), await this._frame._waitForFunctionExpression(metadata, params.expression, params.isFunction, (0, _jsHandleDispatcher.parseArgument)(params.arg), params))
     };
   }
 

@@ -309,11 +309,24 @@ class SocksProxy extends _events.default {
     super();
     this._server = void 0;
     this._connections = new Map();
+    this._sockets = new Set();
+    this._closed = false;
     this._server = new _net.default.Server(socket => {
       const uid = (0, _utils.createGuid)();
       const connection = new SocksConnection(uid, socket, this);
 
       this._connections.set(uid, connection);
+    });
+
+    this._server.on('connection', socket => {
+      if (this._closed) {
+        socket.destroy();
+        return;
+      }
+
+      this._sockets.add(socket);
+
+      socket.once('close', () => this._sockets.delete(socket));
     });
   }
 
@@ -330,6 +343,12 @@ class SocksProxy extends _events.default {
   }
 
   async close() {
+    this._closed = true;
+
+    for (const socket of this._sockets) socket.destroy();
+
+    this._sockets.clear();
+
     await new Promise(f => this._server.close(f));
   }
 

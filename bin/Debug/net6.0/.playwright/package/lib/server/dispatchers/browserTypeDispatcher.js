@@ -23,6 +23,8 @@ var _progress = require("../progress");
 
 var _transport = require("../transport");
 
+var _validator = require("../../protocol/validator");
+
 function _interopRequireDefault(obj) { return obj && obj.__esModule ? obj : { default: obj }; }
 
 function _getRequireWildcardCache(nodeInterop) { if (typeof WeakMap !== "function") return null; var cacheBabelInterop = new WeakMap(); var cacheNodeInterop = new WeakMap(); return (_getRequireWildcardCache = function (nodeInterop) { return nodeInterop ? cacheNodeInterop : cacheBabelInterop; })(nodeInterop); }
@@ -49,30 +51,30 @@ class BrowserTypeDispatcher extends _dispatcher.Dispatcher {
     super(scope, browserType, 'BrowserType', {
       executablePath: browserType.executablePath(),
       name: browserType.name()
-    }, true);
+    });
     this._type_BrowserType = true;
   }
 
   async launch(params, metadata) {
     const browser = await this._object.launch(metadata, params);
     return {
-      browser: new _browserDispatcher.BrowserDispatcher(this._scope, browser)
+      browser: new _browserDispatcher.BrowserDispatcher(this, browser)
     };
   }
 
   async launchPersistentContext(params, metadata) {
     const browserContext = await this._object.launchPersistentContext(metadata, params.userDataDir, params);
     return {
-      context: new _browserContextDispatcher.BrowserContextDispatcher(this._scope, browserContext)
+      context: new _browserContextDispatcher.BrowserContextDispatcher(this, browserContext)
     };
   }
 
   async connectOverCDP(params, metadata) {
     const browser = await this._object.connectOverCDP(metadata, params.endpointURL, params, params.timeout);
-    const browserDispatcher = new _browserDispatcher.BrowserDispatcher(this._scope, browser);
+    const browserDispatcher = new _browserDispatcher.BrowserDispatcher(this, browser);
     return {
       browser: browserDispatcher,
-      defaultContext: browser._defaultContext ? new _browserContextDispatcher.BrowserContextDispatcher(browserDispatcher._scope, browser._defaultContext) : undefined
+      defaultContext: browser._defaultContext ? new _browserContextDispatcher.BrowserContextDispatcher(browserDispatcher, browser._defaultContext) : undefined
     };
   }
 
@@ -85,7 +87,7 @@ class BrowserTypeDispatcher extends _dispatcher.Dispatcher {
       }, params.headers || {});
       const transport = await _transport.WebSocketTransport.connect(progress, params.wsEndpoint, paramsHeaders, true);
       let socksInterceptor;
-      const pipe = new _jsonPipeDispatcher.JsonPipeDispatcher(this._scope);
+      const pipe = new _jsonPipeDispatcher.JsonPipeDispatcher(this);
 
       transport.onmessage = json => {
         var _socksInterceptor;
@@ -144,6 +146,11 @@ class SocksInterceptor {
 
             this._ids.add(id);
 
+            const validator = (0, _validator.findValidator)('SocksSupport', prop, 'Params');
+            params = validator(params, '', {
+              tChannelImpl: tChannelForSocks,
+              binary: 'toBase64'
+            });
             transport.send({
               id,
               guid: socksSupportObjectGuid,
@@ -162,10 +169,7 @@ class SocksInterceptor {
 
     this._handler.on(socks.SocksProxyHandler.Events.SocksConnected, payload => this._channel.socksConnected(payload));
 
-    this._handler.on(socks.SocksProxyHandler.Events.SocksData, payload => this._channel.socksData({
-      uid: payload.uid,
-      data: payload.data.toString('base64')
-    }));
+    this._handler.on(socks.SocksProxyHandler.Events.SocksData, payload => this._channel.socksData(payload));
 
     this._handler.on(socks.SocksProxyHandler.Events.SocksError, payload => this._channel.socksError(payload));
 
@@ -177,10 +181,7 @@ class SocksInterceptor {
 
     this._channel.on('socksClosed', payload => this._handler.socketClosed(payload));
 
-    this._channel.on('socksData', payload => this._handler.sendSocketData({
-      uid: payload.uid,
-      data: Buffer.from(payload.data, 'base64')
-    }));
+    this._channel.on('socksData', payload => this._handler.sendSocketData(payload));
   }
 
   cleanup() {
@@ -195,7 +196,13 @@ class SocksInterceptor {
     }
 
     if (message.guid === this._socksSupportObjectGuid) {
-      this._channel.emit(message.method, message.params);
+      const validator = (0, _validator.findValidator)('SocksSupport', message.method, 'Event');
+      const params = validator(message.params, '', {
+        tChannelImpl: tChannelForSocks,
+        binary: 'fromBase64'
+      });
+
+      this._channel.emit(message.method, params);
 
       return true;
     }
@@ -203,4 +210,8 @@ class SocksInterceptor {
     return false;
   }
 
+}
+
+function tChannelForSocks(names, arg, path, context) {
+  throw new _validator.ValidationError(`${path}: channels are not expected in SocksSupport`);
 }

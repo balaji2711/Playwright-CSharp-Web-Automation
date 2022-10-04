@@ -98,15 +98,16 @@ exports.PipeTransport = PipeTransport;
 class IpcTransport {
   constructor(process) {
     this._process = void 0;
+    this._waitForNextTask = (0, _utils.makeWaitForNextTask)();
     this.onmessage = void 0;
     this.onclose = void 0;
     this._process = process;
 
-    this._process.on('message', message => {
+    this._process.on('message', message => this._waitForNextTask(() => {
       var _this$onclose, _this$onmessage;
 
       if (message === '<eof>') (_this$onclose = this.onclose) === null || _this$onclose === void 0 ? void 0 : _this$onclose.call(this);else (_this$onmessage = this.onmessage) === null || _this$onmessage === void 0 ? void 0 : _this$onmessage.call(this, message);
-    });
+    }));
   }
 
   send(message) {

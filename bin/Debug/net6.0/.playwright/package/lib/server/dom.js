@@ -125,7 +125,6 @@ class FrameExecutionContext extends js.ExecutionContext {
           ${(0, _utils.isUnderTest)()},
           ${this.frame._page._delegate.rafCountForStablePosition()},
           "${this.frame._page._browserContext._browser.options.name}",
-          ${(0, _utils.experimentalFeaturesEnabled)()},
           [${custom.join(',\n')}]
         );
         })();
@@ -485,39 +484,35 @@ class ElementHandle extends js.JSHandle {
 
     if (!options.force) {
       if (options.__testHookBeforeHitTarget) await options.__testHookBeforeHitTarget();
+      const frameCheckResult = await this._checkFrameIsHitTarget(point);
+      if (frameCheckResult === 'error:notconnected' || 'hitTargetDescription' in frameCheckResult) return frameCheckResult;
+      const hitPoint = frameCheckResult.framePoint;
+      const actionType = actionName === 'move and up' ? 'drag' : actionName === 'hover' || actionName === 'tap' ? actionName : 'mouse';
+      const handle = await this.evaluateHandleInUtility(([injected, node, {
+        actionType,
+        hitPoint,
+        trial
+      }]) => injected.setupHitTargetInterceptor(node, actionType, hitPoint, trial), {
+        actionType,
+        hitPoint,
+        trial: !!options.trial
+      });
+      if (handle === 'error:notconnected') return handle;
 
-      if (actionName === 'move and up') {
-        // When dropping, the "element that is being dragged" often stays under the cursor,
-        // so hit target check at the moment we receive mousedown does not work -
-        // it finds the "element that is being dragged" instead of the
-        // "element that we drop onto".
-        progress.log(`  checking that element receives pointer events at (${point.x},${point.y})`);
-        const hitTargetResult = await this._checkHitTargetAt(point);
-        if (hitTargetResult !== 'done') return hitTargetResult;
-        progress.log(`  element does receive pointer events`);
-
-        if (options.trial) {
-          progress.log(`  trial ${actionName} has finished`);
-          return 'done';
-        }
-      } else {
-        const actionType = actionName === 'hover' || actionName === 'tap' ? actionName : 'mouse';
-        const handle = await this.evaluateHandleInUtility(([injected, node, {
-          actionType,
-          trial
-        }]) => injected.setupHitTargetInterceptor(node, actionType, trial), {
-          actionType,
-          trial: !!options.trial
-        });
-        if (handle === 'error:notconnected') return handle;
-        if (!handle._objectId) return handle.rawValue();
-        hitTargetInterceptionHandle = handle;
-        progress.cleanupWhenAborted(() => {
-          // Do not await here, just in case the renderer is stuck (e.g. on alert)
-          // and we won't be able to cleanup.
-          hitTargetInterceptionHandle.evaluate(h => h.stop()).catch(e => {});
-        });
+      if (!handle._objectId) {
+        const error = handle.rawValue();
+        if (error === 'error:notconnected') return error;
+        return {
+          hitTargetDescription: error
+        };
       }
+
+      hitTargetInterceptionHandle = handle;
+      progress.cleanupWhenAborted(() => {
+        // Do not await here, just in case the renderer is stuck (e.g. on alert)
+        // and we won't be able to cleanup.
+        hitTargetInterceptionHandle.evaluate(h => h.stop()).catch(e => {});
+      });
     }
 
     const actionResult = await this._page._frameManager.waitForSignalsCreatedBy(progress, options.noWaitAfter, async () => {
@@ -700,10 +695,17 @@ class ElementHandle extends js.JSHandle {
       files,
       localPaths
     } = items;
+    let filePayloads;
 
     if (files) {
+      filePayloads = [];
+
       for (const payload of files) {
-        if (!payload.mimeType) payload.mimeType = _utilsBundle.mime.getType(payload.name) || 'application/octet-stream';
+        filePayloads.push({
+          name: payload.name,
+          mimeType: payload.mimeType || _utilsBundle.mime.getType(payload.name) || 'application/octet-stream',
+          buffer: payload.buffer.toString('base64')
+        });
       }
     }
 
@@ -721,7 +723,7 @@ class ElementHandle extends js.JSHandle {
     await this._page._frameManager.waitForSignalsCreatedBy(progress, options.noWaitAfter, async () => {
       progress.throwIfAborted(); // Avoid action that has side-effects.
 
-      if (localPaths) await this._page._delegate.setInputFilePaths(retargeted, localPaths);else await this._page._delegate.setInputFiles(retargeted, files);
+      if (localPaths) await this._page._delegate.setInputFilePaths(retargeted, localPaths);else await this._page._delegate.setInputFiles(retargeted, filePayloads);
     });
     await this._page._doSlowMo();
     return 'done';
@@ -950,21 +952,47 @@ class ElementHandle extends js.JSHandle {
     return result;
   }
 
-  async _checkHitTargetAt(point) {
-    const frame = await this.ownerFrame();
+  async _checkFrameIsHitTarget(point) {
+    let frame = this._frame;
+    const data = [];
 
-    if (frame && frame.parentFrame()) {
-      const element = await frame.frameElement();
-      const box = await element.boundingBox();
+    while (frame.parentFrame()) {
+      const frameElement = await frame.frameElement();
+      const box = await frameElement.boundingBox();
       if (!box) return 'error:notconnected'; // Translate from viewport coordinates to frame coordinates.
 
-      point = {
+      const pointInFrame = {
         x: point.x - box.x,
         y: point.y - box.y
       };
+      data.push({
+        frame,
+        frameElement,
+        pointInFrame
+      });
+      frame = frame.parentFrame();
+    } // Add main frame.
+
+
+    data.push({
+      frame,
+      frameElement: null,
+      pointInFrame: point
+    });
+
+    for (let i = data.length - 1; i > 0; i--) {
+      const element = data[i - 1].frameElement;
+      const point = data[i].pointInFrame; // Hit target in the parent frame should hit the child frame element.
+
+      const hitTargetResult = await element.evaluateInUtility(([injected, element, hitPoint]) => {
+        return injected.expectHitTarget(hitPoint, element);
+      }, point);
+      if (hitTargetResult !== 'done') return hitTargetResult;
     }
 
-    return this.evaluateInUtility(([injected, node, point]) => injected.checkHitTargetAt(node, point), point);
+    return {
+      framePoint: data[0].pointInFrame
+    };
   }
 
 } // Handles an InjectedScriptPoll running in injected script:

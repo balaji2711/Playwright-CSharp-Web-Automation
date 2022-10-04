@@ -82,7 +82,7 @@ class HttpServer {
       socket.once('close', () => this._activeSockets.delete(socket));
     });
 
-    this._server.listen(port);
+    this._server.listen(port, 'localhost');
 
     await new Promise(cb => this._server.once('listening', cb));
 
@@ -95,7 +95,7 @@ class HttpServer {
         this._urlPrefix = address;
       } else {
         this._port = address.port;
-        this._urlPrefix = `http://127.0.0.1:${address.port}`;
+        this._urlPrefix = `http://localhost:${address.port}`;
       }
     }
 

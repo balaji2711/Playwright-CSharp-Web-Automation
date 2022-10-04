@@ -51,42 +51,51 @@ function _interopRequireWildcard(obj, nodeInterop) { if (!nodeInterop && obj && 
  * limitations under the License.
  */
 class BrowserContextDispatcher extends _dispatcher.Dispatcher {
-  constructor(scope, context) {
-    super(scope, context, 'BrowserContext', {
+  constructor(parentScope, context) {
+    // We will reparent these to the context below.
+    const requestContext = _networkDispatchers.APIRequestContextDispatcher.from(parentScope, context.fetchRequest);
+
+    const tracing = _tracingDispatcher.TracingDispatcher.from(parentScope, context.tracing);
+
+    super(parentScope, context, 'BrowserContext', {
       isChromium: context._browser.options.isChromium,
-      APIRequestContext: _networkDispatchers.APIRequestContextDispatcher.from(scope, context.fetchRequest),
-      tracing: _tracingDispatcher.TracingDispatcher.from(scope, context.tracing)
-    }, true);
+      requestContext,
+      tracing
+    });
     this._type_EventTarget = true;
     this._type_BrowserContext = true;
     this._context = void 0;
+    this.adopt(requestContext);
+    this.adopt(tracing);
     this._context = context; // Note: when launching persistent context, dispatcher is created very late,
     // so we can already have pages, videos and everything else.
 
     const onVideo = artifact => {
       // Note: Video must outlive Page and BrowserContext, so that client can saveAs it
       // after closing the context. We use |scope| for it.
-      const artifactDispatcher = new _artifactDispatcher.ArtifactDispatcher(scope, artifact);
+      const artifactDispatcher = new _artifactDispatcher.ArtifactDispatcher(parentScope, artifact);
 
       this._dispatchEvent('video', {
         artifact: artifactDispatcher
       });
     };
 
-    context.on(_browserContext.BrowserContext.Events.VideoStarted, onVideo);
+    this.addObjectListener(_browserContext.BrowserContext.Events.VideoStarted, onVideo);
 
     for (const video of context._browser._idToVideo.values()) {
       if (video.context === context) onVideo(video.artifact);
     }
 
     for (const page of context.pages()) this._dispatchEvent('page', {
-      page: new _pageDispatcher.PageDispatcher(this._scope, page)
+      page: _pageDispatcher.PageDispatcher.from(this, page)
     });
 
-    context.on(_browserContext.BrowserContext.Events.Page, page => this._dispatchEvent('page', {
-      page: new _pageDispatcher.PageDispatcher(this._scope, page)
-    }));
-    context.on(_browserContext.BrowserContext.Events.Close, () => {
+    this.addObjectListener(_browserContext.BrowserContext.Events.Page, page => {
+      this._dispatchEvent('page', {
+        page: _pageDispatcher.PageDispatcher.from(this, page)
+      });
+    });
+    this.addObjectListener(_browserContext.BrowserContext.Events.Close, () => {
       this._dispatchEvent('close');
 
       this._dispose();
@@ -94,47 +103,61 @@ class BrowserContextDispatcher extends _dispatcher.Dispatcher {
 
     if (context._browser.options.name === 'chromium') {
       for (const page of context.backgroundPages()) this._dispatchEvent('backgroundPage', {
-        page: new _pageDispatcher.PageDispatcher(this._scope, page)
+        page: _pageDispatcher.PageDispatcher.from(this, page)
       });
 
-      context.on(_crBrowser.CRBrowserContext.CREvents.BackgroundPage, page => this._dispatchEvent('backgroundPage', {
-        page: new _pageDispatcher.PageDispatcher(this._scope, page)
+      this.addObjectListener(_crBrowser.CRBrowserContext.CREvents.BackgroundPage, page => this._dispatchEvent('backgroundPage', {
+        page: _pageDispatcher.PageDispatcher.from(this, page)
       }));
 
       for (const serviceWorker of context.serviceWorkers()) this._dispatchEvent('serviceWorker', {
-        worker: new _pageDispatcher.WorkerDispatcher(this._scope, serviceWorker)
+        worker: new _pageDispatcher.WorkerDispatcher(this, serviceWorker)
       });
 
-      context.on(_crBrowser.CRBrowserContext.CREvents.ServiceWorker, serviceWorker => this._dispatchEvent('serviceWorker', {
-        worker: new _pageDispatcher.WorkerDispatcher(this._scope, serviceWorker)
+      this.addObjectListener(_crBrowser.CRBrowserContext.CREvents.ServiceWorker, serviceWorker => this._dispatchEvent('serviceWorker', {
+        worker: new _pageDispatcher.WorkerDispatcher(this, serviceWorker)
       }));
     }
 
-    context.on(_browserContext.BrowserContext.Events.Request, request => {
+    this.addObjectListener(_browserContext.BrowserContext.Events.Request, request => {
+      var _request$frame;
+
       return this._dispatchEvent('request', {
-        request: _networkDispatchers.RequestDispatcher.from(this._scope, request),
-        page: _pageDispatcher.PageDispatcher.fromNullable(this._scope, request.frame()._page.initializedOrUndefined())
+        request: _networkDispatchers.RequestDispatcher.from(this, request),
+        page: _pageDispatcher.PageDispatcher.fromNullable(this, (_request$frame = request.frame()) === null || _request$frame === void 0 ? void 0 : _request$frame._page.initializedOrUndefined())
       });
     });
-    context.on(_browserContext.BrowserContext.Events.Response, response => this._dispatchEvent('response', {
-      response: _networkDispatchers.ResponseDispatcher.from(this._scope, response),
-      page: _pageDispatcher.PageDispatcher.fromNullable(this._scope, response.frame()._page.initializedOrUndefined())
-    }));
-    context.on(_browserContext.BrowserContext.Events.RequestFailed, request => this._dispatchEvent('requestFailed', {
-      request: _networkDispatchers.RequestDispatcher.from(this._scope, request),
-      failureText: request._failureText || undefined,
-      responseEndTiming: request._responseEndTiming,
-      page: _pageDispatcher.PageDispatcher.fromNullable(this._scope, request.frame()._page.initializedOrUndefined())
-    }));
-    context.on(_browserContext.BrowserContext.Events.RequestFinished, ({
+    this.addObjectListener(_browserContext.BrowserContext.Events.Response, response => {
+      var _response$frame;
+
+      return this._dispatchEvent('response', {
+        response: _networkDispatchers.ResponseDispatcher.from(this, response),
+        page: _pageDispatcher.PageDispatcher.fromNullable(this, (_response$frame = response.frame()) === null || _response$frame === void 0 ? void 0 : _response$frame._page.initializedOrUndefined())
+      });
+    });
+    this.addObjectListener(_browserContext.BrowserContext.Events.RequestFailed, request => {
+      var _request$frame2;
+
+      return this._dispatchEvent('requestFailed', {
+        request: _networkDispatchers.RequestDispatcher.from(this, request),
+        failureText: request._failureText || undefined,
+        responseEndTiming: request._responseEndTiming,
+        page: _pageDispatcher.PageDispatcher.fromNullable(this, (_request$frame2 = request.frame()) === null || _request$frame2 === void 0 ? void 0 : _request$frame2._page.initializedOrUndefined())
+      });
+    });
+    this.addObjectListener(_browserContext.BrowserContext.Events.RequestFinished, ({
       request,
       response
-    }) => this._dispatchEvent('requestFinished', {
-      request: _networkDispatchers.RequestDispatcher.from(scope, request),
-      response: _networkDispatchers.ResponseDispatcher.fromNullable(scope, response),
-      responseEndTiming: request._responseEndTiming,
-      page: _pageDispatcher.PageDispatcher.fromNullable(this._scope, request.frame()._page.initializedOrUndefined())
-    }));
+    }) => {
+      var _request$frame3;
+
+      return this._dispatchEvent('requestFinished', {
+        request: _networkDispatchers.RequestDispatcher.from(this, request),
+        response: _networkDispatchers.ResponseDispatcher.fromNullable(this, response),
+        responseEndTiming: request._responseEndTiming,
+        page: _pageDispatcher.PageDispatcher.fromNullable(this, (_request$frame3 = request.frame()) === null || _request$frame3 === void 0 ? void 0 : _request$frame3._page.initializedOrUndefined())
+      });
+    });
   }
 
   async createTempFile(params, metadata) {
@@ -146,7 +169,7 @@ class BrowserContextDispatcher extends _dispatcher.Dispatcher {
 
     const file = fs.createWriteStream(path.join(tmpDir, params.name));
     return {
-      writableStream: new _writableStreamDispatcher.WritableStreamDispatcher(this._scope, file)
+      writableStream: new _writableStreamDispatcher.WritableStreamDispatcher(this, file)
     };
   }
 
@@ -160,7 +183,9 @@ class BrowserContextDispatcher extends _dispatcher.Dispatcher {
 
   async exposeBinding(params) {
     await this._context.exposeBinding(params.name, !!params.needsHandle, (source, ...args) => {
-      const binding = new _pageDispatcher.BindingCallDispatcher(this._scope, params.name, !!params.needsHandle, source, args);
+      const pageDispatcher = _pageDispatcher.PageDispatcher.from(this, source.page);
+
+      const binding = new _pageDispatcher.BindingCallDispatcher(pageDispatcher, params.name, !!params.needsHandle, source, args);
 
       this._dispatchEvent('bindingCall', {
         binding
@@ -168,10 +193,6 @@ class BrowserContextDispatcher extends _dispatcher.Dispatcher {
 
       return binding.promise();
     });
-  }
-
-  async removeExposedBindings() {
-    await this._context.removeExposedBindings();
   }
 
   async newPage(params, metadata) {
@@ -222,10 +243,6 @@ class BrowserContextDispatcher extends _dispatcher.Dispatcher {
     await this._context.addInitScript(params.source);
   }
 
-  async removeInitScripts() {
-    await this._context.removeInitScripts();
-  }
-
   async setNetworkInterceptionEnabled(params) {
     if (!params.enabled) {
       await this._context.setRequestInterceptor(undefined);
@@ -234,8 +251,7 @@ class BrowserContextDispatcher extends _dispatcher.Dispatcher {
 
     await this._context.setRequestInterceptor((route, request) => {
       this._dispatchEvent('route', {
-        route: _networkDispatchers.RouteDispatcher.from(this._scope, route),
-        request: _networkDispatchers.RequestDispatcher.from(this._scope, request)
+        route: _networkDispatchers.RouteDispatcher.from(_networkDispatchers.RequestDispatcher.from(this, request), route)
       });
     });
   }
@@ -260,18 +276,30 @@ class BrowserContextDispatcher extends _dispatcher.Dispatcher {
     if (!params.page && !params.frame || params.page && params.frame) throw new Error(`CDP session must be initiated with either Page or Frame, not none or both`);
     const crBrowserContext = this._object;
     return {
-      session: new _cdpSessionDispatcher.CDPSessionDispatcher(this._scope, await crBrowserContext.newCDPSession((params.page ? params.page : params.frame)._object))
+      session: new _cdpSessionDispatcher.CDPSessionDispatcher(this, await crBrowserContext.newCDPSession((params.page ? params.page : params.frame)._object))
+    };
+  }
+
+  async harStart(params) {
+    const harId = await this._context._harStart(params.page ? params.page._object : null, params.options);
+    return {
+      harId
     };
   }
 
   async harExport(params) {
-    var _this$_context$_harRe;
-
-    const artifact = await ((_this$_context$_harRe = this._context._harRecorder) === null || _this$_context$_harRe === void 0 ? void 0 : _this$_context$_harRe.export());
+    const artifact = await this._context._harExport(params.harId);
     if (!artifact) throw new Error('No HAR artifact. Ensure record.harPath is set.');
     return {
-      artifact: new _artifactDispatcher.ArtifactDispatcher(this._scope, artifact)
+      artifact: new _artifactDispatcher.ArtifactDispatcher(this, artifact)
     };
+  }
+
+  _dispose() {
+    super._dispose(); // Avoid protocol calls for the closed context.
+
+
+    if (!this._context.isClosingOrClosed()) this._context.setRequestInterceptor(undefined).catch(() => {});
   }
 
 }

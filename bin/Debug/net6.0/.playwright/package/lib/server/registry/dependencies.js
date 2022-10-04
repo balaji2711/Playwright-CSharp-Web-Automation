@@ -3,8 +3,10 @@
 Object.defineProperty(exports, "__esModule", {
   value: true
 });
+exports.dockerVersion = dockerVersion;
 exports.installDependenciesLinux = installDependenciesLinux;
 exports.installDependenciesWindows = installDependenciesWindows;
+exports.readDockerVersionSync = readDockerVersionSync;
 exports.transformCommandsForRoot = transformCommandsForRoot;
 exports.validateDependenciesLinux = validateDependenciesLinux;
 exports.validateDependenciesWindows = validateDependenciesWindows;
@@ -61,16 +63,27 @@ async function writeDockerVersion(dockerImageNameTemplate) {
   await _fs.default.promises.mkdir(_path.default.dirname(dockerVersionFilePath), {
     recursive: true
   });
-  await _fs.default.promises.writeFile(dockerVersionFilePath, JSON.stringify({
-    driverVersion: packageJSON.version,
-    dockerImageName: dockerImageNameTemplate.replace('%version%', packageJSON.version)
-  }, null, 2), 'utf8'); // Make sure version file is globally accessible.
+  await _fs.default.promises.writeFile(dockerVersionFilePath, JSON.stringify(dockerVersion(dockerImageNameTemplate), null, 2), 'utf8'); // Make sure version file is globally accessible.
 
   await _fs.default.promises.chmod(dockerVersionFilePath, 0o777);
 }
 
-async function readDockerVersion() {
-  return await _fs.default.promises.readFile(dockerVersionFilePath, 'utf8').then(text => JSON.parse(text)).catch(e => null);
+function dockerVersion(dockerImageNameTemplate) {
+  return {
+    driverVersion: packageJSON.version,
+    dockerImageName: dockerImageNameTemplate.replace('%version%', packageJSON.version)
+  };
+}
+
+function readDockerVersionSync() {
+  try {
+    const data = JSON.parse(_fs.default.readFileSync(dockerVersionFilePath, 'utf8'));
+    return { ...data,
+      dockerImageNameTemplate: data.dockerImageName.replace(data.driverVersion, '%version%')
+    };
+  } catch (e) {
+    return null;
+  }
 }
 
 const checkExecutable = filePath => _fs.default.promises.access(filePath, _fs.default.constants.X_OK).then(() => true).catch(e => false);
@@ -236,7 +249,7 @@ async function validateDependenciesLinux(sdkLanguage, linuxLddDirectories, dlOpe
   }
 
   const maybeSudo = process.getuid() !== 0 && os.platform() !== 'win32' ? 'sudo ' : '';
-  const dockerInfo = await readDockerVersion();
+  const dockerInfo = readDockerVersionSync();
   const errorLines = [`Host system is missing dependencies to run browsers.`]; // Ignore patch versions when comparing docker container version and Playwright version:
   // we **NEVER** roll browsers in patch releases, so native dependencies do not change.
 
@@ -247,11 +260,11 @@ async function validateDependenciesLinux(sdkLanguage, linuxLddDirectories, dlOpe
     // In this case, we know how to install dependencies in it.
     const pwVersion = (0, _userAgent.getPlaywrightVersion)();
     const requiredDockerImage = dockerInfo.dockerImageName.replace(dockerInfo.driverVersion, pwVersion);
-    errorLines.push(...[`This is most likely due to docker image version not matching Playwright version:`, `- Playwright: ${pwVersion}`, `-     Docker: ${dockerInfo.driverVersion}`, ``, `Either:`, `- (recommended) use docker image "${requiredDockerImage}"`, `- (alternative 1) run the following command inside docker to install missing dependencies:`, ``, `    ${maybeSudo}${(0, _.buildPlaywrightCLICommand)(sdkLanguage, 'install-deps')}`, ``, `- (alternative 2) use Aptitude inside docker:`, ``, `    ${maybeSudo}apt-get install ${[...missingPackages].join('\\\n        ')}`, ``, `<3 Playwright Team`]);
+    errorLines.push(...[`This is most likely due to docker image version not matching Playwright version:`, `- Playwright: ${pwVersion}`, `-     Docker: ${dockerInfo.driverVersion}`, ``, `Either:`, `- (recommended) use docker image "${requiredDockerImage}"`, `- (alternative 1) run the following command inside docker to install missing dependencies:`, ``, `    ${maybeSudo}${(0, _.buildPlaywrightCLICommand)(sdkLanguage, 'install-deps')}`, ``, `- (alternative 2) use apt inside docker:`, ``, `    ${maybeSudo}apt-get install ${[...missingPackages].join('\\\n        ')}`, ``, `<3 Playwright Team`]);
   } else if (missingPackages.size && !missingDeps.size) {
     // Only known dependencies are missing for browsers.
     // Suggest installation with a Playwright CLI.
-    errorLines.push(...[`Please install them with the following command:`, ``, `    ${maybeSudo}${(0, _.buildPlaywrightCLICommand)(sdkLanguage, 'install-deps')}`, ``, `Alternatively, use Aptitude:`, `    ${maybeSudo}apt-get install ${[...missingPackages].join('\\\n        ')}`, ``, `<3 Playwright Team`]);
+    errorLines.push(...[`Please install them with the following command:`, ``, `    ${maybeSudo}${(0, _.buildPlaywrightCLICommand)(sdkLanguage, 'install-deps')}`, ``, `Alternatively, use apt:`, `    ${maybeSudo}apt-get install ${[...missingPackages].join('\\\n        ')}`, ``, `<3 Playwright Team`]);
   } else {
     // Unhappy path: we either run on unknown distribution, or we failed to resolve all missing
     // libraries to package names.

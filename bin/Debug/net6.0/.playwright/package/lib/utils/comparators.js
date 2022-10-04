@@ -36,6 +36,8 @@ function getComparator(mimeType) {
   return compareBuffersOrStrings;
 }
 
+const JPEG_JS_MAX_BUFFER_SIZE_IN_MB = 5 * 1024; // ~5 GB
+
 function compareBuffersOrStrings(actualBuffer, expectedBuffer) {
   if (typeof actualBuffer === 'string') return compareText(actualBuffer, expectedBuffer);
   if (!actualBuffer || !(actualBuffer instanceof Buffer)) return {
@@ -53,8 +55,12 @@ function compareImages(mimeType, actualBuffer, expectedBuffer, options = {}) {
   if (!actualBuffer || !(actualBuffer instanceof Buffer)) return {
     errorMessage: 'Actual result should be a Buffer.'
   };
-  const actual = mimeType === 'image/png' ? _utilsBundle.PNG.sync.read(actualBuffer) : _utilsBundle.jpegjs.decode(actualBuffer);
-  const expected = mimeType === 'image/png' ? _utilsBundle.PNG.sync.read(expectedBuffer) : _utilsBundle.jpegjs.decode(expectedBuffer);
+  const actual = mimeType === 'image/png' ? _utilsBundle.PNG.sync.read(actualBuffer) : _utilsBundle.jpegjs.decode(actualBuffer, {
+    maxMemoryUsageInMB: JPEG_JS_MAX_BUFFER_SIZE_IN_MB
+  });
+  const expected = mimeType === 'image/png' ? _utilsBundle.PNG.sync.read(expectedBuffer) : _utilsBundle.jpegjs.decode(expectedBuffer, {
+    maxMemoryUsageInMB: JPEG_JS_MAX_BUFFER_SIZE_IN_MB
+  });
 
   if (expected.width !== actual.width || expected.height !== actual.height) {
     return {

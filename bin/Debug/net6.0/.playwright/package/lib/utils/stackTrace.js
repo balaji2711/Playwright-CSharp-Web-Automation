@@ -32,8 +32,6 @@ function _interopRequireDefault(obj) { return obj && obj.__esModule ? obj : { de
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-const stackUtils = new _utilsBundle.StackUtils();
-
 function rewriteErrorMessage(e, newMessage) {
   var _e$stack;
 
@@ -69,9 +67,7 @@ function isInternalFileName(file, functionName) {
   // Node 16+ has node:internal.
   if (file.startsWith('internal') || file.startsWith('node:')) return true; // EventEmitter.emit has 'events.js' file.
 
-  if (file === 'events.js' && functionName !== null && functionName !== void 0 && functionName.endsWith('emit')) return true; // Node 12
-
-  if (file === '_stream_readable.js' || file === '_stream_writable.js') return true;
+  if (file === 'events.js' && functionName !== null && functionName !== void 0 && functionName.endsWith('emit')) return true;
   return false;
 }
 
@@ -79,13 +75,13 @@ function captureStackTrace(rawStack) {
   const stack = rawStack || captureRawStack();
   const isTesting = (0, _.isUnderTest)();
   let parsedFrames = stack.split('\n').map(line => {
-    const frame = stackUtils.parseLine(line);
-    if (!frame || !frame.file) return null;
-    if (isInternalFileName(frame.file, frame.function)) return null; // Workaround for https://github.com/tapjs/stack-utils/issues/60
-
-    let fileName;
-    if (frame.file.startsWith('file://')) fileName = new URL(frame.file).pathname;else fileName = _path.default.resolve(process.cwd(), frame.file);
-    if (isTesting && fileName.includes(COVERAGE_PATH)) return null;
+    const {
+      frame,
+      fileName
+    } = (0, _utilsBundle.parseStackTraceLine)(line);
+    if (!frame || !frame.file || !fileName) return null;
+    if (!process.env.PWDEBUGIMPL && isInternalFileName(frame.file, frame.function)) return null;
+    if (!process.env.PWDEBUGIMPL && isTesting && fileName.includes(COVERAGE_PATH)) return null;
     const inCore = fileName.startsWith(CORE_LIB) || fileName.startsWith(CORE_SRC);
     const parsed = {
       frame: {
@@ -107,7 +103,7 @@ function captureStackTrace(rawStack) {
     if (parsedFrames[i].inCore && !parsedFrames[i + 1].inCore) {
       const frame = parsedFrames[i].frame;
       apiName = normalizeAPIName(frame.function);
-      parsedFrames = parsedFrames.slice(i + 1);
+      if (!process.env.PWDEBUGIMPL) parsedFrames = parsedFrames.slice(i + 1);
       break;
     }
   }
@@ -121,8 +117,9 @@ function captureStackTrace(rawStack) {
 
 
   parsedFrames = parsedFrames.filter((f, i) => {
+    if (process.env.PWDEBUGIMPL) return true;
     if (f.frame.file.startsWith(TEST_DIR_SRC) || f.frame.file.startsWith(TEST_DIR_LIB)) return false;
-    if (i && f.frame.file.startsWith(CORE_DIR)) return false;
+    if (f.frame.file.startsWith(CORE_DIR)) return false;
     return true;
   });
   return {

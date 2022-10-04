@@ -1,17 +1,17 @@
 {
   "format": 1,
   "restore": {
-    "C:\\Project\\Automation\\PlaywrightAutomator\\PlaywrightAutomator.csproj": {}
+    "C:\\Project\\Personal Git\\PlaywrightAutomator\\PlaywrightAutomator.csproj": {}
   },
   "projects": {
-    "C:\\Project\\Automation\\PlaywrightAutomator\\PlaywrightAutomator.csproj": {
+    "C:\\Project\\Personal Git\\PlaywrightAutomator\\PlaywrightAutomator.csproj": {
       "version": "1.0.0",
       "restore": {
-        "projectUniqueName": "C:\\Project\\Automation\\PlaywrightAutomator\\PlaywrightAutomator.csproj",
+        "projectUniqueName": "C:\\Project\\Personal Git\\PlaywrightAutomator\\PlaywrightAutomator.csproj",
         "projectName": "PlaywrightAutomator",
-        "projectPath": "C:\\Project\\Automation\\PlaywrightAutomator\\PlaywrightAutomator.csproj",
+        "projectPath": "C:\\Project\\Personal Git\\PlaywrightAutomator\\PlaywrightAutomator.csproj",
         "packagesPath": "C:\\Users\\b.gopi\\.nuget\\packages\\",
-        "outputPath": "C:\\Project\\Automation\\PlaywrightAutomator\\obj\\",
+        "outputPath": "C:\\Project\\Personal Git\\PlaywrightAutomator\\obj\\",
         "projectStyle": "PackageReference",
         "configFilePaths": [
           "C:\\Users\\b.gopi\\AppData\\Roaming\\NuGet\\NuGet.Config",
@@ -46,23 +46,23 @@
             },
             "FluentAssertions": {
               "target": "Package",
-              "version": "[6.2.0, )"
+              "version": "[6.7.0, )"
             },
             "Microsoft.NET.Test.Sdk": {
               "target": "Package",
-              "version": "[17.0.0, )"
+              "version": "[17.3.2, )"
             },
             "Microsoft.Playwright": {
               "target": "Package",
-              "version": "[1.22.0, )"
+              "version": "[1.26.0, )"
             },
             "NUnit3TestAdapter": {
               "target": "Package",
-              "version": "[4.1.0, )"
+              "version": "[4.2.1, )"
             },
             "SpecFlow.NUnit": {
               "target": "Package",
-              "version": "[3.9.40, )"
+              "version": "[3.9.74, )"
             },
             "SpecFlow.Plus.LivingDocPlugin": {
               "target": "Package",
@@ -70,7 +70,7 @@
             },
             "nunit": {
               "target": "Package",
-              "version": "[3.13.2, )"
+              "version": "[3.13.3, )"
             }
           },
           "imports": [
@@ -88,7 +88,7 @@
               "privateAssets": "all"
             }
           },
-          "runtimeIdentifierGraphPath": "C:\\Program Files\\dotnet\\sdk\\6.0.301\\RuntimeIdentifierGraph.json"
+          "runtimeIdentifierGraphPath": "C:\\Program Files\\dotnet\\sdk\\6.0.304\\RuntimeIdentifierGraph.json"
         }
       }
     }

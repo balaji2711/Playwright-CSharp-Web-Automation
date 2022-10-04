@@ -19,6 +19,8 @@ var dialog = _interopRequireWildcard(require("../dialog"));
 
 var dom = _interopRequireWildcard(require("../dom"));
 
+var frames = _interopRequireWildcard(require("../frames"));
+
 var _helper = require("../helper");
 
 var network = _interopRequireWildcard(require("../network"));
@@ -48,6 +50,8 @@ var _crProtocolHelper = require("./crProtocolHelper");
 var _defaultFontFamilies = require("./defaultFontFamilies");
 
 var _videoRecorder = require("./videoRecorder");
+
+var _browserContext = require("../browserContext");
 
 function _getRequireWildcardCache(nodeInterop) { if (typeof WeakMap !== "function") return null; var cacheBabelInterop = new WeakMap(); var cacheNodeInterop = new WeakMap(); return (_getRequireWildcardCache = function (nodeInterop) { return nodeInterop ? cacheNodeInterop : cacheBabelInterop; })(nodeInterop); }
 
@@ -122,7 +126,7 @@ class CRPage {
 
       const viewportSize = _helper.helper.getViewportSizeFromWindowFeatures(features);
 
-      if (viewportSize) this._page._state.emulatedSize = {
+      if (viewportSize) this._page._emulatedSize = {
         viewport: viewportSize,
         screen: viewportSize
       };
@@ -154,11 +158,7 @@ class CRPage {
   }
 
   _reportAsNew(error) {
-    if (this._isBackgroundPage) {
-      if (!error) this._browserContext.emit(_crBrowser.CRBrowserContext.CREvents.BackgroundPage, this._page);
-    } else {
-      this._page.reportAsNew(error);
-    }
+    this._page.reportAsNew(error, this._isBackgroundPage ? _crBrowser.CRBrowserContext.CREvents.BackgroundPage : _browserContext.BrowserContext.Events.Page);
   }
 
   async _forAllFrameSessions(cb) {
@@ -232,9 +232,8 @@ class CRPage {
     await this._forAllFrameSessions(frame => frame._updateHttpCredentials(false));
   }
 
-  async setEmulatedSize(emulatedSize) {
-    (0, _utils.assert)(this._page._state.emulatedSize === emulatedSize);
-    await this._mainFrameSession._updateViewport();
+  async updateEmulatedViewportSize(preserveWindowBoundaries) {
+    await this._mainFrameSession._updateViewport(preserveWindowBoundaries);
   }
 
   async bringToFront() {
@@ -242,15 +241,19 @@ class CRPage {
   }
 
   async updateEmulateMedia() {
-    await this._forAllFrameSessions(frame => frame._updateEmulateMedia(false));
+    await this._forAllFrameSessions(frame => frame._updateEmulateMedia());
+  }
+
+  async updateUserAgent() {
+    await this._forAllFrameSessions(frame => frame._updateUserAgent());
   }
 
   async updateRequestInterception() {
     await this._forAllFrameSessions(frame => frame._updateRequestInterception());
   }
 
-  async setFileChooserIntercepted(enabled) {
-    await this._forAllFrameSessions(frame => frame.setFileChooserIntercepted(enabled));
+  async updateFileChooserInterception() {
+    await this._forAllFrameSessions(frame => frame._updateFileChooserInterception(false));
   }
 
   async reload() {
@@ -456,11 +459,12 @@ class FrameSession {
     this._screencastClients = new Set();
     this._evaluateOnNewDocumentIdentifiers = [];
     this._exposedBindingNames = [];
+    this._metricsOverride = void 0;
     this._client = client;
     this._crPage = crPage;
     this._page = crPage._page;
     this._targetId = targetId;
-    this._networkManager = new _crNetworkManager.CRNetworkManager(client, this._page, parentSession ? parentSession._networkManager : null);
+    this._networkManager = new _crNetworkManager.CRNetworkManager(client, this._page, null, parentSession ? parentSession._networkManager : null);
     this._parentSession = parentSession;
     if (parentSession) parentSession._childSessions.add(this);
     this._firstNonInitialNavigationCommittedPromise = new Promise((f, r) => {
@@ -477,7 +481,7 @@ class FrameSession {
   }
 
   _addRendererListeners() {
-    this._eventListeners.push(...[_eventsHelper.eventsHelper.addEventListener(this._client, 'Log.entryAdded', event => this._onLogEntryAdded(event)), _eventsHelper.eventsHelper.addEventListener(this._client, 'Page.fileChooserOpened', event => this._onFileChooserOpened(event)), _eventsHelper.eventsHelper.addEventListener(this._client, 'Page.frameAttached', event => this._onFrameAttached(event.frameId, event.parentFrameId)), _eventsHelper.eventsHelper.addEventListener(this._client, 'Page.frameDetached', event => this._onFrameDetached(event.frameId, event.reason)), _eventsHelper.eventsHelper.addEventListener(this._client, 'Page.frameNavigated', event => this._onFrameNavigated(event.frame, false)), _eventsHelper.eventsHelper.addEventListener(this._client, 'Page.frameRequestedNavigation', event => this._onFrameRequestedNavigation(event)), _eventsHelper.eventsHelper.addEventListener(this._client, 'Page.frameStoppedLoading', event => this._onFrameStoppedLoading(event.frameId)), _eventsHelper.eventsHelper.addEventListener(this._client, 'Page.javascriptDialogOpening', event => this._onDialog(event)), _eventsHelper.eventsHelper.addEventListener(this._client, 'Page.navigatedWithinDocument', event => this._onFrameNavigatedWithinDocument(event.frameId, event.url)), _eventsHelper.eventsHelper.addEventListener(this._client, 'Runtime.bindingCalled', event => this._onBindingCalled(event)), _eventsHelper.eventsHelper.addEventListener(this._client, 'Runtime.consoleAPICalled', event => this._onConsoleAPI(event)), _eventsHelper.eventsHelper.addEventListener(this._client, 'Runtime.exceptionThrown', exception => this._handleException(exception.exceptionDetails)), _eventsHelper.eventsHelper.addEventListener(this._client, 'Runtime.executionContextCreated', event => this._onExecutionContextCreated(event.context)), _eventsHelper.eventsHelper.addEventListener(this._client, 'Runtime.executionContextDestroyed', event => this._onExecutionContextDestroyed(event.executionContextId)), _eventsHelper.eventsHelper.addEventListener(this._client, 'Runtime.executionContextsCleared', event => this._onExecutionContextsCleared()), _eventsHelper.eventsHelper.addEventListener(this._client, 'Target.attachedToTarget', event => this._onAttachedToTarget(event)), _eventsHelper.eventsHelper.addEventListener(this._client, 'Target.detachedFromTarget', event => this._onDetachedFromTarget(event))]);
+    this._eventListeners.push(...[_eventsHelper.eventsHelper.addEventListener(this._client, 'Log.entryAdded', event => this._onLogEntryAdded(event)), _eventsHelper.eventsHelper.addEventListener(this._client, 'Page.fileChooserOpened', event => this._onFileChooserOpened(event)), _eventsHelper.eventsHelper.addEventListener(this._client, 'Page.frameAttached', event => this._onFrameAttached(event.frameId, event.parentFrameId)), _eventsHelper.eventsHelper.addEventListener(this._client, 'Page.frameDetached', event => this._onFrameDetached(event.frameId, event.reason)), _eventsHelper.eventsHelper.addEventListener(this._client, 'Page.frameNavigated', event => this._onFrameNavigated(event.frame, false)), _eventsHelper.eventsHelper.addEventListener(this._client, 'Page.frameRequestedNavigation', event => this._onFrameRequestedNavigation(event)), _eventsHelper.eventsHelper.addEventListener(this._client, 'Page.javascriptDialogOpening', event => this._onDialog(event)), _eventsHelper.eventsHelper.addEventListener(this._client, 'Page.navigatedWithinDocument', event => this._onFrameNavigatedWithinDocument(event.frameId, event.url)), _eventsHelper.eventsHelper.addEventListener(this._client, 'Runtime.bindingCalled', event => this._onBindingCalled(event)), _eventsHelper.eventsHelper.addEventListener(this._client, 'Runtime.consoleAPICalled', event => this._onConsoleAPI(event)), _eventsHelper.eventsHelper.addEventListener(this._client, 'Runtime.exceptionThrown', exception => this._handleException(exception.exceptionDetails)), _eventsHelper.eventsHelper.addEventListener(this._client, 'Runtime.executionContextCreated', event => this._onExecutionContextCreated(event.context)), _eventsHelper.eventsHelper.addEventListener(this._client, 'Runtime.executionContextDestroyed', event => this._onExecutionContextDestroyed(event.executionContextId)), _eventsHelper.eventsHelper.addEventListener(this._client, 'Runtime.executionContextsCleared', event => this._onExecutionContextsCleared()), _eventsHelper.eventsHelper.addEventListener(this._client, 'Target.attachedToTarget', event => this._onAttachedToTarget(event)), _eventsHelper.eventsHelper.addEventListener(this._client, 'Target.detachedFromTarget', event => this._onDetachedFromTarget(event))]);
   }
 
   _addBrowserListeners() {
@@ -587,10 +591,7 @@ class FrameSession {
       if (options.javaScriptEnabled === false) promises.push(this._client.send('Emulation.setScriptExecutionDisabled', {
         value: true
       }));
-      if (options.userAgent || options.locale) promises.push(this._client.send('Emulation.setUserAgentOverride', {
-        userAgent: options.userAgent || '',
-        acceptLanguage: options.locale
-      }));
+      if (options.userAgent || options.locale) promises.push(this._updateUserAgent());
       if (options.locale) promises.push(emulateLocale(this._client, options.locale));
       if (options.timezoneId) promises.push(emulateTimezone(this._client, options.timezoneId));
       if (!this._crPage._browserContext._browser.options.headful) promises.push(this._setDefaultFontFamilies(this._client));
@@ -599,7 +600,8 @@ class FrameSession {
       promises.push(this._updateRequestInterception());
       promises.push(this._updateOffline(true));
       promises.push(this._updateHttpCredentials(true));
-      promises.push(this._updateEmulateMedia(true));
+      promises.push(this._updateEmulateMedia());
+      promises.push(this._updateFileChooserInterception(true));
 
       for (const binding of this._crPage._page.allBindings()) promises.push(this._initBinding(binding));
 
@@ -633,7 +635,7 @@ class FrameSession {
       referrer,
       frameId: frame._id
     });
-    if (response.errorText) throw new Error(`${response.errorText} at ${url}`);
+    if (response.errorText) throw new frames.NavigationAbortedError(response.loaderId, `${response.errorText} at ${url}`);
     return {
       newDocumentId: response.loaderId
     };
@@ -642,12 +644,6 @@ class FrameSession {
   _onLifecycleEvent(event) {
     if (this._eventBelongsToStaleFrame(event.frameId)) return;
     if (event.name === 'load') this._page._frameManager.frameLifecycleEvent(event.frameId, 'load');else if (event.name === 'DOMContentLoaded') this._page._frameManager.frameLifecycleEvent(event.frameId, 'domcontentloaded');
-  }
-
-  _onFrameStoppedLoading(frameId) {
-    if (this._eventBelongsToStaleFrame(frameId)) return;
-
-    this._page._frameManager.frameStoppedLoading(frameId);
   }
 
   _handleFrameTree(frameTree) {
@@ -959,6 +955,8 @@ class FrameSession {
   }
 
   async _onFileChooserOpened(event) {
+    if (!event.backendNodeId) return;
+
     const frame = this._page._frameManager.frame(event.frameId);
 
     if (!frame) return;
@@ -1058,7 +1056,7 @@ class FrameSession {
   }
 
   async _updateExtraHTTPHeaders(initial) {
-    const headers = network.mergeHeaders([this._crPage._browserContext._options.extraHTTPHeaders, this._page._state.extraHTTPHeaders]);
+    const headers = network.mergeHeaders([this._crPage._browserContext._options.extraHTTPHeaders, this._page.extraHTTPHeaders()]);
     if (!initial || headers.length) await this._client.send('Network.setExtraHTTPHeaders', {
       headers: (0, _utils.headersArrayToObject)(headers, false
       /* lowerCase */
@@ -1081,16 +1079,18 @@ class FrameSession {
     if (!initial || credentials) await this._networkManager.authenticate(credentials);
   }
 
-  async _updateViewport() {
+  async _updateViewport(preserveWindowBoundaries) {
     if (this._crPage._browserContext._browser.isClank()) return;
     (0, _utils.assert)(this._isMainFrame());
     const options = this._crPage._browserContext._options;
-    const emulatedSize = this._page._state.emulatedSize;
+
+    const emulatedSize = this._page.emulatedSize();
+
     if (emulatedSize === null) return;
     const viewportSize = emulatedSize.viewport;
     const screenSize = emulatedSize.screen;
     const isLandscape = viewportSize.width > viewportSize.height;
-    const promises = [this._client.send('Emulation.setDeviceMetricsOverride', {
+    const metricsOverride = {
       mobile: !!options.isMobile,
       width: viewportSize.width,
       height: viewportSize.height,
@@ -1103,10 +1103,13 @@ class FrameSession {
       } : {
         angle: 0,
         type: 'portraitPrimary'
-      }
-    })];
+      },
+      dontSetVisibleSize: preserveWindowBoundaries
+    };
+    if (JSON.stringify(this._metricsOverride) === JSON.stringify(metricsOverride)) return;
+    const promises = [this._client.send('Emulation.setDeviceMetricsOverride', metricsOverride)];
 
-    if (this._windowId) {
+    if (!preserveWindowBoundaries && this._windowId) {
       let insets = {
         width: 0,
         height: 0
@@ -1144,6 +1147,7 @@ class FrameSession {
     }
 
     await Promise.all(promises);
+    this._metricsOverride = metricsOverride;
   }
 
   async windowBounds() {
@@ -1162,10 +1166,12 @@ class FrameSession {
     });
   }
 
-  async _updateEmulateMedia(initial) {
-    const colorScheme = this._page._state.colorScheme === null ? '' : this._page._state.colorScheme;
-    const reducedMotion = this._page._state.reducedMotion === null ? '' : this._page._state.reducedMotion;
-    const forcedColors = this._page._state.forcedColors === null ? '' : this._page._state.forcedColors;
+  async _updateEmulateMedia() {
+    const emulatedMedia = this._page.emulatedMedia();
+
+    const colorScheme = emulatedMedia.colorScheme === null ? '' : emulatedMedia.colorScheme;
+    const reducedMotion = emulatedMedia.reducedMotion === null ? '' : emulatedMedia.reducedMotion;
+    const forcedColors = emulatedMedia.forcedColors === null ? '' : emulatedMedia.forcedColors;
     const features = [{
       name: 'prefers-color-scheme',
       value: colorScheme
@@ -1178,8 +1184,16 @@ class FrameSession {
     }]; // Empty string disables the override.
 
     await this._client.send('Emulation.setEmulatedMedia', {
-      media: this._page._state.mediaType || '',
+      media: emulatedMedia.media || '',
       features
+    });
+  }
+
+  async _updateUserAgent() {
+    const options = this._crPage._browserContext._options;
+    await this._client.send('Emulation.setUserAgentOverride', {
+      userAgent: options.userAgent || '',
+      acceptLanguage: options.locale
     });
   }
 
@@ -1190,13 +1204,16 @@ class FrameSession {
   }
 
   async _updateRequestInterception() {
-    await this._networkManager.setRequestInterception(this._page._needsRequestInterception());
+    await this._networkManager.setRequestInterception(this._page.needsRequestInterception());
   }
 
-  async setFileChooserIntercepted(enabled) {
+  async _updateFileChooserInterception(initial) {
+    const enabled = this._page.fileChooserIntercepted();
+
+    if (initial && !enabled) return;
     await this._client.send('Page.setInterceptFileChooserDialog', {
       enabled
-    }).catch(e => {}); // target can be closed.
+    }).catch(() => {}); // target can be closed.
   }
 
   async _evaluateOnNewDocument(source, world) {

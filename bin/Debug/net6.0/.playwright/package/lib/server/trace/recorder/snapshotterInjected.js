@@ -203,7 +203,7 @@ function frameSnapshotStreamer(snapshotStreamer) {
     }
 
     _sanitizeUrl(url) {
-      if (url.startsWith('javascript:')) return '';
+      if (url.startsWith('javascript:') || url.startsWith('vbscript:')) return '';
       return url;
     }
 

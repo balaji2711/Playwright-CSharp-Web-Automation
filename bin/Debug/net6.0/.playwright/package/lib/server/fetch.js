@@ -67,7 +67,7 @@ class APIRequestContext extends _instrumentation.SdkObject {
   }
 
   constructor(parent) {
-    super(parent, 'fetchRequest');
+    super(parent, 'request-context');
     this.fetchResponses = new Map();
     this.fetchLog = new Map();
     APIRequestContext.allInstances.add(this);
@@ -143,7 +143,7 @@ class APIRequestContext extends _instrumentation.SdkObject {
       method,
       headers,
       agent,
-      maxRedirects: 20,
+      maxRedirects: params.maxRedirects === 0 ? -1 : params.maxRedirects === undefined ? 20 : params.maxRedirects,
       timeout,
       deadline
     }; // rejectUnauthorized = undefined is treated as true in node 12.
@@ -158,8 +158,7 @@ class APIRequestContext extends _instrumentation.SdkObject {
       } of params.params) requestUrl.searchParams.set(name, value);
     }
 
-    let postData;
-    if (['POST', 'PUT', 'PATCH', 'DELETE'].includes(method)) postData = serializePostData(params, headers);else if (params.postData || params.jsonData || params.formData || params.multipartData) throw new Error(`Method ${method} does not accept post data`);
+    const postData = serializePostData(params, headers);
     if (postData) headers['content-length'] = String(postData.byteLength);
     const controller = new _progress.ProgressController(metadata, this);
     const fetchResponse = await controller.run(progress => {
@@ -251,7 +250,7 @@ class APIRequestContext extends _instrumentation.SdkObject {
 
         if (cookies.length) await this._addCookies(cookies);
 
-        if (redirectStatus.includes(response.statusCode)) {
+        if (redirectStatus.includes(response.statusCode) && options.maxRedirects >= 0) {
           if (!options.maxRedirects) {
             reject(new Error('Max redirect count exceeded'));
             request.destroy();
@@ -507,10 +506,8 @@ class GlobalAPIRequestContext extends APIRequestContext {
   }
 
   async dispose() {
-    await this._tracing.flush();
+    await this._tracing.dispose();
     await this._tracing.deleteTmpTracesDir();
-
-    this._tracing.dispose();
 
     this._disposeImpl();
   }
@@ -666,7 +663,7 @@ function serializePostData(params, headers) {
     var _contentType4, _headers$_contentType4;
 
     (_headers$_contentType4 = headers[_contentType4 = 'content-type']) !== null && _headers$_contentType4 !== void 0 ? _headers$_contentType4 : headers[_contentType4] = 'application/octet-stream';
-    return Buffer.from(params.postData, 'base64');
+    return params.postData;
   }
 
   return undefined;

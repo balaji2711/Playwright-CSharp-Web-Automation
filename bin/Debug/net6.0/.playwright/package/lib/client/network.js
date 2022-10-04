@@ -12,6 +12,8 @@ var _channelOwner = require("./channelOwner");
 
 var _frame = require("./frame");
 
+var _worker = require("./worker");
+
 var _fs = _interopRequireDefault(require("fs"));
 
 var _utilsBundle = require("../utilsBundle");
@@ -24,7 +26,7 @@ var _events = require("./events");
 
 var _waiter = require("./waiter");
 
-var _clientHelper = require("./clientHelper");
+var _netUtils = require("../common/netUtils");
 
 var _multimap = require("../utils/multimap");
 
@@ -57,6 +59,8 @@ class Request extends _channelOwner.ChannelOwner {
   }
 
   constructor(parent, type, guid, initializer) {
+    var _initializer$postData;
+
     super(parent, type, guid, initializer);
     this._redirectedFrom = null;
     this._redirectedTo = null;
@@ -65,10 +69,11 @@ class Request extends _channelOwner.ChannelOwner {
     this._actualHeadersPromise = void 0;
     this._postData = void 0;
     this._timing = void 0;
+    this._fallbackOverrides = {};
     this._redirectedFrom = Request.fromNullable(initializer.redirectedFrom);
     if (this._redirectedFrom) this._redirectedFrom._redirectedTo = this;
     this._provisionalHeaders = new RawHeaders(initializer.headers);
-    this._postData = initializer.postData !== undefined ? Buffer.from(initializer.postData, 'base64') : null;
+    this._postData = (_initializer$postData = initializer.postData) !== null && _initializer$postData !== void 0 ? _initializer$postData : null;
     this._timing = {
       startTime: 0,
       domainLookupStart: -1,
@@ -83,7 +88,7 @@ class Request extends _channelOwner.ChannelOwner {
   }
 
   url() {
-    return this._initializer.url;
+    return this._fallbackOverrides.url || this._initializer.url;
   }
 
   resourceType() {
@@ -91,14 +96,20 @@ class Request extends _channelOwner.ChannelOwner {
   }
 
   method() {
-    return this._initializer.method;
+    return this._fallbackOverrides.method || this._initializer.method;
   }
 
   postData() {
+    if (this._fallbackOverrides.postData) return this._fallbackOverrides.postData.toString('utf-8');
     return this._postData ? this._postData.toString('utf8') : null;
   }
 
   postDataBuffer() {
+    if (this._fallbackOverrides.postData) {
+      if ((0, _utils.isString)(this._fallbackOverrides.postData)) return Buffer.from(this._fallbackOverrides.postData, 'utf-8');
+      return this._fallbackOverrides.postData;
+    }
+
     return this._postData;
   }
 
@@ -128,10 +139,18 @@ class Request extends _channelOwner.ChannelOwner {
 
 
   headers() {
+    if (this._fallbackOverrides.headers) return RawHeaders._fromHeadersObjectLossy(this._fallbackOverrides.headers).headers();
     return this._provisionalHeaders.headers();
   }
 
+  _context() {
+    // TODO: make sure this works for service worker requests.
+    return this.frame().page().context();
+  }
+
   _actualHeaders() {
+    if (this._fallbackOverrides.headers) return Promise.resolve(RawHeaders._fromHeadersObjectLossy(this._fallbackOverrides.headers));
+
     if (!this._actualHeadersPromise) {
       this._actualHeadersPromise = this._wrapApiCall(async () => {
         return new RawHeaders((await this._channel.rawRequestHeaders()).headers);
@@ -164,7 +183,16 @@ class Request extends _channelOwner.ChannelOwner {
   }
 
   frame() {
+    if (!this._initializer.frame) {
+      (0, _utils.assert)(this.serviceWorker());
+      throw new Error('Service Worker requests do not have an associated frame.');
+    }
+
     return _frame.Frame.from(this._initializer.frame);
+  }
+
+  serviceWorker() {
+    return this._initializer.serviceWorker ? _worker.Worker.from(this._initializer.serviceWorker) : null;
   }
 
   isNavigationRequest() {
@@ -200,6 +228,16 @@ class Request extends _channelOwner.ChannelOwner {
     return this._redirectedTo ? this._redirectedTo._finalRequest() : this;
   }
 
+  _applyFallbackOverrides(overrides) {
+    this._fallbackOverrides = { ...this._fallbackOverrides,
+      ...overrides
+    };
+  }
+
+  _fallbackOverridesForContinue() {
+    return this._fallbackOverrides;
+  }
+
 }
 
 exports.Request = Request;
@@ -211,28 +249,66 @@ class Route extends _channelOwner.ChannelOwner {
 
   constructor(parent, type, guid, initializer) {
     super(parent, type, guid, initializer);
+    this._handlingPromise = null;
   }
 
   request() {
     return Request.from(this._initializer.request);
   }
 
-  _raceWithPageClose(promise) {
-    const page = this.request().frame()._page; // When page closes or crashes, we catch any potential rejects from this Route.
+  _raceWithTargetClose(promise) {
+    var _this$request$service, _this$request$frame$_;
+
+    // When page closes or crashes, we catch any potential rejects from this Route.
     // Note that page could be missing when routing popup's initial request that
     // does not have a Page initialized just yet.
+    return Promise.race([promise, ((_this$request$service = this.request().serviceWorker()) === null || _this$request$service === void 0 ? void 0 : _this$request$service._closedPromise) || ((_this$request$frame$_ = this.request().frame()._page) === null || _this$request$frame$_ === void 0 ? void 0 : _this$request$frame$_._closedOrCrashedPromise) || Promise.resolve()]);
+  }
 
+  _startHandling() {
+    this._handlingPromise = new _manualPromise.ManualPromise();
+    return this._handlingPromise;
+  }
 
-    return Promise.race([promise, page ? page._closedOrCrashedPromise : Promise.resolve()]);
+  async fallback(options = {}) {
+    this._checkNotHandled();
+
+    this.request()._applyFallbackOverrides(options);
+
+    this._reportHandled(false);
   }
 
   async abort(errorCode) {
-    await this._raceWithPageClose(this._channel.abort({
+    this._checkNotHandled();
+
+    await this._raceWithTargetClose(this._channel.abort({
       errorCode
     }));
+
+    this._reportHandled(true);
+  }
+
+  async _redirectNavigationRequest(url) {
+    this._checkNotHandled();
+
+    await this._raceWithTargetClose(this._channel.redirectNavigationRequest({
+      url
+    }));
+
+    this._reportHandled(true);
   }
 
   async fulfill(options = {}) {
+    this._checkNotHandled();
+
+    await this._wrapApiCall(async () => {
+      await this._innerFulfill(options);
+
+      this._reportHandled(true);
+    });
+  }
+
+  async _innerFulfill(options = {}) {
     let fetchResponseUid;
     let {
       status: statusOption,
@@ -240,11 +316,13 @@ class Route extends _channelOwner.ChannelOwner {
       body
     } = options;
 
-    if (options.response) {
-      statusOption || (statusOption = options.response.status());
-      headersOption || (headersOption = options.response.headers());
+    if (options.response instanceof _fetch.APIResponse) {
+      var _statusOption, _headersOption;
 
-      if (options.body === undefined && options.path === undefined && options.response instanceof _fetch.APIResponse) {
+      (_statusOption = statusOption) !== null && _statusOption !== void 0 ? _statusOption : statusOption = options.response.status();
+      (_headersOption = headersOption) !== null && _headersOption !== void 0 ? _headersOption : headersOption = options.response.headers();
+
+      if (body === undefined && options.path === undefined) {
         if (options.response._request._connection === this._connection) fetchResponseUid = options.response._fetchUid();else body = await options.response.body();
       }
     }
@@ -272,7 +350,7 @@ class Route extends _channelOwner.ChannelOwner {
 
     if (options.contentType) headers['content-type'] = String(options.contentType);else if (options.path) headers['content-type'] = _utilsBundle.mime.getType(options.path) || 'application/octet-stream';
     if (length && !('content-length' in headers)) headers['content-length'] = String(length);
-    await this._raceWithPageClose(this._channel.fulfill({
+    await this._raceWithTargetClose(this._channel.fulfill({
       status: statusOption || 200,
       headers: (0, _utils.headersObjectToArray)(headers),
       body,
@@ -282,23 +360,37 @@ class Route extends _channelOwner.ChannelOwner {
   }
 
   async continue(options = {}) {
-    await this._continue(options);
+    this._checkNotHandled();
+
+    this.request()._applyFallbackOverrides(options);
+
+    await this._innerContinue();
+
+    this._reportHandled(true);
   }
 
-  async _internalContinue(options = {}) {
-    await this._continue(options, true).catch(() => {});
+  _checkNotHandled() {
+    if (!this._handlingPromise) throw new Error('Route is already handled!');
   }
 
-  async _continue(options, isInternal) {
+  _reportHandled(done) {
+    const chain = this._handlingPromise;
+    this._handlingPromise = null;
+    chain.resolve(done);
+  }
+
+  async _innerContinue(internal = false) {
+    const options = this.request()._fallbackOverridesForContinue();
+
     return await this._wrapApiCall(async () => {
       const postDataBuffer = (0, _utils.isString)(options.postData) ? Buffer.from(options.postData, 'utf8') : options.postData;
-      await this._raceWithPageClose(this._channel.continue({
+      await this._raceWithTargetClose(this._channel.continue({
         url: options.url,
         method: options.method,
         headers: options.headers ? (0, _utils.headersObjectToArray)(options.headers) : undefined,
-        postData: postDataBuffer ? postDataBuffer.toString('base64') : undefined
+        postData: postDataBuffer
       }));
-    }, isInternal);
+    }, !!internal);
   }
 
 }
@@ -341,6 +433,10 @@ class Response extends _channelOwner.ChannelOwner {
   statusText() {
     return this._initializer.statusText;
   }
+
+  fromServiceWorker() {
+    return this._initializer.fromServiceWorker;
+  }
   /**
    * @deprecated
    */
@@ -381,7 +477,7 @@ class Response extends _channelOwner.ChannelOwner {
   }
 
   async body() {
-    return Buffer.from((await this._channel.body()).binary, 'base64');
+    return (await this._channel.body()).binary;
   }
 
   async text() {
@@ -503,16 +599,22 @@ class RouteHandler {
   }
 
   matches(requestURL) {
-    return (0, _clientHelper.urlMatches)(this._baseURL, requestURL, this.url);
+    return (0, _netUtils.urlMatches)(this._baseURL, requestURL, this.url);
   }
 
-  handle(route, request) {
+  async handle(route) {
     ++this.handledCount;
-    this.handler(route, request);
+
+    const handledPromise = route._startHandling(); // Extract handler into a variable to avoid [RouteHandler.handler] in the stack.
+
+
+    const handler = this.handler;
+    const [handled] = await Promise.all([handledPromise, handler(route, route.request())]);
+    return handled;
   }
 
-  isActive() {
-    return this.handledCount < this._times;
+  willExpire() {
+    return this.handledCount + 1 >= this._times;
   }
 
 }
@@ -520,6 +622,14 @@ class RouteHandler {
 exports.RouteHandler = RouteHandler;
 
 class RawHeaders {
+  static _fromHeadersObjectLossy(headers) {
+    const headersArray = Object.entries(headers).map(([name, value]) => ({
+      name,
+      value
+    })).filter(header => header.value !== undefined);
+    return new RawHeaders(headersArray);
+  }
+
   constructor(headers) {
     this._headersArray = void 0;
     this._headersMap = new _multimap.MultiMap();

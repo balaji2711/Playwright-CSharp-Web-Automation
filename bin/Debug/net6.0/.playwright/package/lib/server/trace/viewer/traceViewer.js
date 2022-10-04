@@ -93,8 +93,16 @@ async function showTraceViewer(traceUrls, browserName, headless = false, port) {
   await context.extendInjectedScript(consoleApiSource.source);
   const [page] = context.pages();
   if (traceViewerBrowser === 'chromium') await (0, _crApp.installAppIcon)(page);
-  if ((0, _utils.isUnderTest)()) page.on('close', () => context.close((0, _instrumentation.serverSideCallMetadata)()).catch(() => {}));else page.on('close', () => process.exit());
-  const searchQuery = traceUrls.length ? '?' + traceUrls.map(t => `trace=${t}`).join('&') : '';
+  const params = traceUrls.map(t => `trace=${t}`);
+
+  if ((0, _utils.isUnderTest)()) {
+    params.push('isUnderTest=true');
+    page.on('close', () => context.close((0, _instrumentation.serverSideCallMetadata)()).catch(() => {}));
+  } else {
+    page.on('close', () => process.exit());
+  }
+
+  const searchQuery = params.length ? '?' + params.join('&') : '';
   await page.mainFrame().goto((0, _instrumentation.serverSideCallMetadata)(), urlPrefix + `/trace/index.html${searchQuery}`);
   return context;
 }

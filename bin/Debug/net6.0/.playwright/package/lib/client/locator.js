@@ -32,7 +32,7 @@ class Locator {
 
     if (options !== null && options !== void 0 && options.hasText) {
       const text = options.hasText;
-      if ((0, _utils.isRegExp)(text)) this._selector += ` >> :scope:text-matches(${(0, _stringUtils.escapeWithQuotes)(text.source, '"')}, "${text.flags}")`;else this._selector += ` >> :scope:has-text(${(0, _stringUtils.escapeWithQuotes)(text, '"')})`;
+      if ((0, _utils.isRegExp)(text)) this._selector += ` >> has=${JSON.stringify('text=' + text.toString())}`;else this._selector += ` >> :scope:has-text(${(0, _stringUtils.escapeWithQuotes)(text, '"')})`;
     }
 
     if (options !== null && options !== void 0 && options.has) {
@@ -358,7 +358,7 @@ class Locator {
         ...options,
         isNot: !!options.isNot
       };
-      if (options.expectedValue) params.expectedValue = (0, _jsHandle.serializeArgument)(options.expectedValue);
+      params.expectedValue = (0, _jsHandle.serializeArgument)(options.expectedValue);
       const result = await this._frame._channel.expect(params);
       if (result.received !== undefined) result.received = (0, _jsHandle.parseResult)(result.received);
       return result;

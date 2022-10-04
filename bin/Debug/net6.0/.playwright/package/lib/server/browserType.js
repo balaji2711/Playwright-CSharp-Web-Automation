@@ -35,6 +35,8 @@ var _debugLogger = require("../common/debugLogger");
 
 var _instrumentation = require("./instrumentation");
 
+var _manualPromise = require("../utils/manualPromise");
+
 function _getRequireWildcardCache(nodeInterop) { if (typeof WeakMap !== "function") return null; var cacheBabelInterop = new WeakMap(); var cacheNodeInterop = new WeakMap(); return (_getRequireWildcardCache = function (nodeInterop) { return nodeInterop ? cacheNodeInterop : cacheBabelInterop; })(nodeInterop); }
 
 function _interopRequireWildcard(obj, nodeInterop) { if (!nodeInterop && obj && obj.__esModule) { return obj; } if (obj === null || typeof obj !== "object" && typeof obj !== "function") { return { default: obj }; } var cache = _getRequireWildcardCache(nodeInterop); if (cache && cache.has(obj)) { return cache.get(obj); } var newObj = {}; var hasPropertyDescriptor = Object.defineProperty && Object.getOwnPropertyDescriptor; for (var key in obj) { if (key !== "default" && Object.prototype.hasOwnProperty.call(obj, key)) { var desc = hasPropertyDescriptor ? Object.getOwnPropertyDescriptor(obj, key) : null; if (desc && (desc.get || desc.set)) { Object.defineProperty(newObj, key, desc); } else { newObj[key] = obj[key]; } } } newObj.default = obj; if (cache) { cache.set(obj, newObj); } return newObj; }
@@ -87,7 +89,7 @@ class BrowserType extends _instrumentation.SdkObject {
       return this._innerLaunchWithRetries(progress, options, undefined, _helper.helper.debugProtocolLogger(protocolLogger)).catch(e => {
         throw this._rewriteStartupError(e);
       });
-    }, _timeoutSettings.TimeoutSettings.timeout(options));
+    }, _timeoutSettings.TimeoutSettings.launchTimeout(options));
     return browser;
   }
 
@@ -100,7 +102,7 @@ class BrowserType extends _instrumentation.SdkObject {
       return this._innerLaunchWithRetries(progress, options, persistent, _helper.helper.debugProtocolLogger(), userDataDir).catch(e => {
         throw this._rewriteStartupError(e);
       });
-    }, _timeoutSettings.TimeoutSettings.timeout(options));
+    }, _timeoutSettings.TimeoutSettings.launchTimeout(options));
     return browser._defaultContext;
   }
 
@@ -145,7 +147,8 @@ class BrowserType extends _instrumentation.SdkObject {
       proxy: options.proxy,
       protocolLogger,
       browserLogsCollector,
-      wsEndpoint: options.useWebSocket ? transport.wsEndpoint : undefined
+      wsEndpoint: options.useWebSocket ? transport.wsEndpoint : undefined,
+      originalLaunchOptions: options
     };
     if (persistent) (0, _browserContext.validateBrowserContextOptions)(persistent, browserOptions);
     copyTestHooks(options, browserOptions);
@@ -205,9 +208,8 @@ class BrowserType extends _instrumentation.SdkObject {
       await registryExecutable.validateHostRequirements(this._playwrightOptions.sdkLanguage);
     }
 
-    let wsEndpointCallback;
-    const shouldWaitForWSListening = options.useWebSocket || ((_options$args = options.args) === null || _options$args === void 0 ? void 0 : _options$args.some(a => a.startsWith('--remote-debugging-port')));
-    const waitForWSEndpoint = shouldWaitForWSListening ? new Promise(f => wsEndpointCallback = f) : undefined; // Note: it is important to define these variables before launchProcess, so that we don't get
+    const waitForWSEndpoint = options.useWebSocket || (_options$args = options.args) !== null && _options$args !== void 0 && _options$args.some(a => a.startsWith('--remote-debugging-port')) ? new _manualPromise.ManualPromise() : undefined;
+    const waitForJuggler = this._name === 'firefox' ? new _manualPromise.ManualPromise() : undefined; // Note: it is important to define these variables before launchProcess, so that we don't get
     // "Cannot access 'browserServer' before initialization" if something went wrong.
 
     let transport = undefined;
@@ -224,11 +226,12 @@ class BrowserType extends _instrumentation.SdkObject {
       handleSIGTERM,
       handleSIGHUP,
       log: message => {
-        if (wsEndpointCallback) {
+        if (waitForWSEndpoint) {
           const match = message.match(/DevTools listening on (.*)/);
-          if (match) wsEndpointCallback(match[1]);
+          if (match) waitForWSEndpoint.resolve(match[1]);
         }
 
+        if (waitForJuggler && message.includes('Juggler listening to the pipe')) waitForJuggler.resolve();
         progress.log(message);
         browserLogsCollector.log(message);
       },
@@ -242,6 +245,8 @@ class BrowserType extends _instrumentation.SdkObject {
         this._attemptToGracefullyCloseBrowser(transport);
       },
       onExit: (exitCode, signal) => {
+        // Unblock launch when browser prematurely exits.
+        waitForJuggler === null || waitForJuggler === void 0 ? void 0 : waitForJuggler.resolve();
         if (browserProcess && browserProcess.onclose) browserProcess.onclose(exitCode, signal);
       }
     });
@@ -265,8 +270,8 @@ class BrowserType extends _instrumentation.SdkObject {
       kill
     };
     progress.cleanupWhenAborted(() => closeOrKill(progress.timeUntilDeadline()));
-    let wsEndpoint;
-    if (shouldWaitForWSListening) wsEndpoint = await waitForWSEndpoint;
+    const wsEndpoint = await waitForWSEndpoint;
+    await waitForJuggler;
 
     if (options.useWebSocket) {
       transport = await _transport.WebSocketTransport.connect(progress, wsEndpoint);

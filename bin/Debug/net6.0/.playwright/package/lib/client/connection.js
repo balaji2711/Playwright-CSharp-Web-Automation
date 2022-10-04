@@ -59,6 +59,8 @@ var _localUtils = require("./localUtils");
 
 var _tracing = require("./tracing");
 
+var _validator = require("../protocol/validator");
+
 /**
  * Copyright (c) Microsoft Corporation.
  *
@@ -91,7 +93,7 @@ class DummyChannelOwner extends _channelOwner.ChannelOwner {}
 
 class Connection extends _events.EventEmitter {
   // Some connections allow resolving in-process dispatchers.
-  constructor() {
+  constructor(localUtils) {
     super();
     this._objects = new Map();
 
@@ -102,8 +104,10 @@ class Connection extends _events.EventEmitter {
     this._rootObject = void 0;
     this._closedErrorMessage = void 0;
     this._isRemote = false;
+    this._localUtils = void 0;
     this.toImpl = void 0;
     this._rootObject = new Root(this);
+    this._localUtils = localUtils;
   }
 
   markAsRemote() {
@@ -112,6 +116,10 @@ class Connection extends _events.EventEmitter {
 
   isRemote() {
     return this._isRemote;
+  }
+
+  localUtils() {
+    return this._localUtils;
   }
 
   async initializePlaywright() {
@@ -126,7 +134,7 @@ class Connection extends _events.EventEmitter {
     return this._objects.get(guid);
   }
 
-  async sendMessageToServer(object, method, params, stackTrace) {
+  async sendMessageToServer(object, type, method, params, stackTrace) {
     if (this._closedErrorMessage) throw new Error(this._closedErrorMessage);
     const {
       apiName,
@@ -157,12 +165,10 @@ class Connection extends _events.EventEmitter {
     return await new Promise((resolve, reject) => this._callbacks.set(id, {
       resolve,
       reject,
-      stackTrace
+      stackTrace,
+      type,
+      method
     }));
-  }
-
-  _debugScopeState() {
-    return this._rootObject._debugScopeState();
   }
 
   dispatch(message) {
@@ -185,7 +191,16 @@ class Connection extends _events.EventEmitter {
 
       this._callbacks.delete(id);
 
-      if (error && !result) callback.reject((0, _serializers.parseError)(error));else callback.resolve(this._replaceGuidsWithChannels(result));
+      if (error && !result) {
+        callback.reject((0, _serializers.parseError)(error));
+      } else {
+        const validator = (0, _validator.findValidator)(callback.type, callback.method, 'Result');
+        callback.resolve(validator(result, '', {
+          tChannelImpl: this._tChannelImplFromWire.bind(this),
+          binary: this.isRemote() ? 'fromBase64' : 'buffer'
+        }));
+      }
+
       return;
     }
 
@@ -197,21 +212,32 @@ class Connection extends _events.EventEmitter {
       return;
     }
 
+    const object = this._objects.get(guid);
+
+    if (!object) throw new Error(`Cannot find object to "${method}": ${guid}`);
+
+    if (method === '__adopt__') {
+      const child = this._objects.get(params.guid);
+
+      if (!child) throw new Error(`Unknown new child: ${params.guid}`);
+
+      object._adopt(child);
+
+      return;
+    }
+
     if (method === '__dispose__') {
-      const object = this._objects.get(guid);
-
-      if (!object) throw new Error(`Cannot find object to dispose: ${guid}`);
-
       object._dispose();
 
       return;
     }
 
-    const object = this._objects.get(guid);
+    const validator = (0, _validator.findValidator)(object._type, method, 'Event');
 
-    if (!object) throw new Error(`Cannot find object to emit "${method}": ${guid}`);
-
-    object._channel.emit(method, object._type === 'JsonPipe' ? params : this._replaceGuidsWithChannels(params));
+    object._channel.emit(method, validator(params, '', {
+      tChannelImpl: this._tChannelImplFromWire.bind(this),
+      binary: this.isRemote() ? 'fromBase64' : 'buffer'
+    }));
   }
 
   close(errorMessage = 'Connection closed') {
@@ -224,20 +250,16 @@ class Connection extends _events.EventEmitter {
     this.emit('close');
   }
 
-  _replaceGuidsWithChannels(payload) {
-    if (!payload) return payload;
-    if (Array.isArray(payload)) return payload.map(p => this._replaceGuidsWithChannels(p));
-    if (payload.guid && this._objects.has(payload.guid)) return this._objects.get(payload.guid)._channel;
+  _tChannelImplFromWire(names, arg, path, context) {
+    if (arg && typeof arg === 'object' && typeof arg.guid === 'string') {
+      const object = this._objects.get(arg.guid);
 
-    if (typeof payload === 'object') {
-      const result = {};
-
-      for (const key of Object.keys(payload)) result[key] = this._replaceGuidsWithChannels(payload[key]);
-
-      return result;
+      if (!object) throw new Error(`Object with guid ${arg.guid} was not bound in the connection`);
+      if (names !== '*' && !names.includes(object._type)) throw new _validator.ValidationError(`${path}: expected channel ${names.toString()}`);
+      return object._channel;
     }
 
-    return payload;
+    throw new _validator.ValidationError(`${path}: expected channel ${names.toString()}`);
   }
 
   _createRemoteObject(parentGuid, type, guid, initializer) {
@@ -245,7 +267,11 @@ class Connection extends _events.EventEmitter {
 
     if (!parent) throw new Error(`Cannot find parent object ${parentGuid} to create ${guid}`);
     let result;
-    initializer = this._replaceGuidsWithChannels(initializer);
+    const validator = (0, _validator.findValidator)(type, '', 'Initializer');
+    initializer = validator(initializer, '', {
+      tChannelImpl: this._tChannelImplFromWire.bind(this),
+      binary: this.isRemote() ? 'fromBase64' : 'buffer'
+    });
 
     switch (type) {
       case 'Android':
@@ -322,6 +348,7 @@ class Connection extends _events.EventEmitter {
 
       case 'LocalUtils':
         result = new _localUtils.LocalUtils(parent, type, guid, initializer);
+        if (!this._localUtils) this._localUtils = result;
         break;
 
       case 'Page':

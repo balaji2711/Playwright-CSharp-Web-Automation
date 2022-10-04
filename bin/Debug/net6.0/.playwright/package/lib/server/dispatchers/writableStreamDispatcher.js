@@ -36,7 +36,7 @@ class WritableStreamDispatcher extends _dispatcher.Dispatcher {
   async write(params) {
     const stream = this._object.stream;
     await new Promise((fulfill, reject) => {
-      stream.write(Buffer.from(params.binary, 'base64'), error => {
+      stream.write(params.binary, error => {
         if (error) reject(error);else fulfill();
       });
     });

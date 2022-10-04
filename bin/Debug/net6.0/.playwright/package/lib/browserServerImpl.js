@@ -59,7 +59,13 @@ class BrowserServerLauncherImpl {
     let path = `/${(0, _utils.createGuid)()}`;
     if (options.wsPath) path = options.wsPath.startsWith('/') ? options.wsPath : `/${options.wsPath}`; // 2. Start the server
 
-    const server = new _playwrightServer.PlaywrightServer(path, Infinity, false, browser);
+    const server = new _playwrightServer.PlaywrightServer('use-pre-launched-browser', {
+      path,
+      maxConcurrentConnections: Infinity,
+      maxIncomingConnections: Infinity,
+      enableSocksProxy: false,
+      preLaunchedBrowser: browser
+    });
     const wsEndpoint = await server.listen(options.port); // 3. Return the BrowserServer interface
 
     const browserServer = new _utilsBundle.ws.EventEmitter();

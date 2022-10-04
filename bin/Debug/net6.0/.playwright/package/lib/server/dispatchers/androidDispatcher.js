@@ -28,14 +28,14 @@ var _browserContextDispatcher = require("./browserContextDispatcher");
  */
 class AndroidDispatcher extends _dispatcher.Dispatcher {
   constructor(scope, android) {
-    super(scope, android, 'Android', {}, true);
+    super(scope, android, 'Android', {});
     this._type_Android = true;
   }
 
   async devices(params) {
     const devices = await this._object.devices(params);
     return {
-      devices: devices.map(d => AndroidDeviceDispatcher.from(this._scope, d))
+      devices: devices.map(d => AndroidDeviceDispatcher.from(this, d))
     };
   }
 
@@ -57,7 +57,7 @@ class AndroidDeviceDispatcher extends _dispatcher.Dispatcher {
     super(scope, device, 'AndroidDevice', {
       model: device.model,
       serial: device.serial
-    }, true);
+    });
     this._type_EventTarget = true;
     this._type_AndroidDevice = true;
 
@@ -65,10 +65,10 @@ class AndroidDeviceDispatcher extends _dispatcher.Dispatcher {
       webView
     });
 
-    device.on(_android.AndroidDevice.Events.WebViewAdded, webView => this._dispatchEvent('webViewAdded', {
+    this.addObjectListener(_android.AndroidDevice.Events.WebViewAdded, webView => this._dispatchEvent('webViewAdded', {
       webView
     }));
-    device.on(_android.AndroidDevice.Events.WebViewRemoved, socketName => this._dispatchEvent('webViewRemoved', {
+    this.addObjectListener(_android.AndroidDevice.Events.WebViewRemoved, socketName => this._dispatchEvent('webViewRemoved', {
       socketName
     }));
   }
@@ -158,37 +158,37 @@ class AndroidDeviceDispatcher extends _dispatcher.Dispatcher {
 
   async screenshot(params) {
     return {
-      binary: (await this._object.screenshot()).toString('base64')
+      binary: await this._object.screenshot()
     };
   }
 
   async shell(params) {
     return {
-      result: (await this._object.shell(params.command)).toString('base64')
+      result: await this._object.shell(params.command)
     };
   }
 
   async open(params, metadata) {
     const socket = await this._object.open(params.command);
     return {
-      socket: new AndroidSocketDispatcher(this._scope, socket)
+      socket: new AndroidSocketDispatcher(this, socket)
     };
   }
 
   async installApk(params) {
-    await this._object.installApk(Buffer.from(params.file, 'base64'), {
+    await this._object.installApk(params.file, {
       args: params.args
     });
   }
 
   async push(params) {
-    await this._object.push(Buffer.from(params.file, 'base64'), params.path, params.mode);
+    await this._object.push(params.file, params.path, params.mode);
   }
 
   async launchBrowser(params) {
     const context = await this._object.launchBrowser(params.pkg, params);
     return {
-      context: new _browserContextDispatcher.BrowserContextDispatcher(this._scope, context)
+      context: new _browserContextDispatcher.BrowserContextDispatcher(this, context)
     };
   }
 
@@ -202,7 +202,7 @@ class AndroidDeviceDispatcher extends _dispatcher.Dispatcher {
 
   async connectToWebView(params) {
     return {
-      context: new _browserContextDispatcher.BrowserContextDispatcher(this._scope, await this._object.connectToWebView(params.socketName))
+      context: new _browserContextDispatcher.BrowserContextDispatcher(this, await this._object.connectToWebView(params.socketName))
     };
   }
 
@@ -212,12 +212,12 @@ exports.AndroidDeviceDispatcher = AndroidDeviceDispatcher;
 
 class AndroidSocketDispatcher extends _dispatcher.Dispatcher {
   constructor(scope, socket) {
-    super(scope, socket, 'AndroidSocket', {}, true);
+    super(scope, socket, 'AndroidSocket', {});
     this._type_AndroidSocket = true;
-    socket.on('data', data => this._dispatchEvent('data', {
-      data: data.toString('base64')
+    this.addObjectListener('data', data => this._dispatchEvent('data', {
+      data
     }));
-    socket.on('close', () => {
+    this.addObjectListener('close', () => {
       this._dispatchEvent('close');
 
       this._dispose();
@@ -225,7 +225,7 @@ class AndroidSocketDispatcher extends _dispatcher.Dispatcher {
   }
 
   async write(params, metadata) {
-    await this._object.write(Buffer.from(params.data, 'base64'));
+    await this._object.write(params.data);
   }
 
   async close(params, metadata) {

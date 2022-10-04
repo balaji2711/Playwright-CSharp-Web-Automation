@@ -66,6 +66,8 @@ SerializedValue:
       - "-0"
     # String representation of the Date.
     d: string?
+    # String representation of the URL.
+    u: string?
     # Regular expression pattern and flags.
     r:
       type: object?
@@ -108,6 +110,7 @@ ExpectedTextValue:
     regexSource: string?
     regexFlags: string?
     matchSubstring: boolean?
+    ignoreCase: boolean?
     normalizeWhiteSpace: boolean?
 
 
@@ -219,6 +222,27 @@ SerializedError:
         stack: string?
     value: SerializedValue?
 
+
+RecordHarOptions:
+  type: object
+  properties:
+    path: string
+    content:
+      type: enum?
+      literals:
+      - embed
+      - attach
+      - omit
+    mode:
+      type: enum?
+      literals:
+      - full
+      - minimal
+    urlGlob: string?
+    urlRegexSource: string?
+    urlRegexFlags: string?
+
+
 FormField:
   type: object
   properties:
@@ -260,6 +284,7 @@ APIRequestContext:
         timeout: number?
         failOnStatusCode: boolean?
         ignoreHTTPSErrors: boolean?
+        maxRedirects: number?
       returns:
         response: APIResponse
 
@@ -267,7 +292,7 @@ APIRequestContext:
       parameters:
         fetchUid: string
       returns:
-        binary?: binary
+        binary: binary?
 
     fetchLog:
       parameters:
@@ -441,12 +466,13 @@ ContextOptions:
           properties:
             width: number
             height: number
-    recordHar:
-      type: object?
-      properties:
-        omitContent: boolean?
-        path: string
+    recordHar: RecordHarOptions?
     strictSelectors: boolean?
+    serviceWorkers:
+      type: enum?
+      literals:
+      - allow
+      - block
 
 LocalUtils:
   type: interface
@@ -459,6 +485,48 @@ LocalUtils:
         entries:
           type: array
           items: NameValue
+
+    harOpen:
+      parameters:
+        file: string
+      returns:
+        harId: string?
+        error: string?
+
+    harLookup:
+      parameters:
+        harId: string
+        url: string
+        method: string
+        headers:
+          type: array
+          items: NameValue
+        postData: binary?
+        isNavigationRequest: boolean
+      returns:
+        action:
+          type: enum
+          literals:
+          - error
+          - redirect
+          - fulfill
+          - noentry
+        message: string?
+        redirectURL: string?
+        status: number?
+        headers:
+          type: array?
+          items: NameValue
+        body: binary?
+
+    harClose:
+      parameters:
+        harId: string
+
+    harUnzip:
+      parameters:
+        zipFile: string
+        harFile: string
 
 Root:
   type: interface
@@ -694,6 +762,28 @@ Browser:
       returns:
         context: BrowserContext
 
+    newContextForReuse:
+      parameters:
+        $mixin: ContextOptions
+        proxy:
+          type: object?
+          properties:
+            server: string
+            bypass: string?
+            username: string?
+            password: string?
+        storageState:
+          type: object?
+          properties:
+            cookies:
+              type: array?
+              items: SetNetworkCookie
+            origins:
+              type: array?
+              items: OriginStorage
+      returns:
+        context: BrowserContext
+
     newBrowserCDPSession:
       returns:
         session: CDPSession
@@ -710,6 +800,7 @@ Browser:
     stopTracing:
       returns:
         binary: binary
+
 
   events:
 
@@ -745,7 +836,7 @@ BrowserContext:
 
   initializer:
     isChromium: boolean
-    APIRequestContext: APIRequestContext
+    requestContext: APIRequestContext
     tracing: Tracing
 
   commands:
@@ -759,8 +850,6 @@ BrowserContext:
     addInitScript:
       parameters:
         source: string
-
-    removeInitScripts:
 
     clearCookies:
 
@@ -782,8 +871,6 @@ BrowserContext:
       parameters:
         name: string
         needsHandle: boolean?
-
-    removeExposedBindings:
 
     grantPermissions:
       parameters:
@@ -851,13 +938,19 @@ BrowserContext:
       experimental: True
       parameters:
         language: string?
-        startRecording: boolean?
+        mode:
+          type: enum?
+          literals:
+          - inspecting
+          - recording
         pauseOnNextStatement: boolean?
         launchOptions: json?
         contextOptions: json?
         device: string?
         saveStorage: string?
         outputFile: string?
+        handleSIGINT: boolean?
+        omitCallTracking: boolean?
 
     newCDPSession:
       parameters:
@@ -866,7 +959,16 @@ BrowserContext:
       returns:
         session: CDPSession
 
+    harStart:
+      parameters:
+        page: Page?
+        options: RecordHarOptions
+      returns:
+        harId: string
+
     harExport:
+      parameters:
+        harId: string?
       returns:
         artifact: Artifact
 
@@ -891,7 +993,6 @@ BrowserContext:
     route:
       parameters:
         route: Route
-        request: Request
 
     video:
       parameters:
@@ -962,8 +1063,6 @@ Page:
       parameters:
         source: string
 
-    removeInitScripts:
-
     close:
       parameters:
         runBeforeUnload: boolean?
@@ -1004,8 +1103,6 @@ Page:
       parameters:
         name: string
         needsHandle: boolean?
-
-    removeExposedBindings:
 
     goBack:
       parameters:
@@ -1305,8 +1402,6 @@ Page:
         suggestedFilename: string
         artifact: Artifact
 
-    domcontentloaded:
-
     fileChooser:
       parameters:
         element: ElementHandle
@@ -1320,8 +1415,6 @@ Page:
       parameters:
         frame: Frame
 
-    load:
-
     pageError:
       parameters:
         error: SerializedError
@@ -1329,7 +1422,6 @@ Page:
     route:
       parameters:
         route: Route
-        request: Request
 
     video:
       parameters:
@@ -2408,7 +2500,8 @@ Request:
   type: interface
 
   initializer:
-    frame: Frame
+    frame: Frame?
+    serviceWorker: Worker?
     url: string
     resourceType: string
     method: string
@@ -2440,6 +2533,10 @@ Route:
 
   commands:
 
+    redirectNavigationRequest:
+      parameters:
+        url: string
+
     abort:
       parameters:
         errorCode: string?
@@ -2463,7 +2560,6 @@ Route:
         body: string?
         isBase64: boolean?
         fetchResponseUid: string?
-
 
 ResourceTiming:
   type: object
@@ -2489,6 +2585,7 @@ Response:
       type: array
       items: NameValue
     timing: ResourceTiming
+    fromServiceWorker: boolean
 
 
   commands:
@@ -2785,11 +2882,7 @@ Electron:
         ignoreHTTPSErrors: boolean?
         locale: string?
         offline: boolean?
-        recordHar:
-          type: object?
-          properties:
-            omitContent: boolean?
-            path: string
+        recordHar: RecordHarOptions?
         recordVideo:
           type: object?
           properties:

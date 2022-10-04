@@ -29,13 +29,15 @@ var _browserServerImpl = require("./browserServerImpl");
 function createInProcessPlaywright() {
   const playwright = (0, _server.createPlaywright)('javascript');
   const clientConnection = new _connection.Connection();
-  const dispatcherConnection = new _server.DispatcherConnection(); // Dispatch synchronously at first.
+  const dispatcherConnection = new _server.DispatcherConnection(true
+  /* local */
+  ); // Dispatch synchronously at first.
 
   dispatcherConnection.onmessage = message => clientConnection.dispatch(message);
 
   clientConnection.onmessage = message => dispatcherConnection.dispatch(message);
 
-  const rootScope = new _server.Root(dispatcherConnection); // Initialize Playwright channel.
+  const rootScope = new _server.RootDispatcher(dispatcherConnection); // Initialize Playwright channel.
 
   new _server.PlaywrightDispatcher(rootScope, playwright);
   const playwrightAPI = clientConnection.getObjectWithKnownName('Playwright');
@@ -47,7 +49,7 @@ function createInProcessPlaywright() {
 
   clientConnection.onmessage = message => setImmediate(() => dispatcherConnection.dispatch(message));
 
-  clientConnection.toImpl = x => dispatcherConnection._dispatchers.get(x._guid)._object;
+  clientConnection.toImpl = x => x ? dispatcherConnection._dispatchers.get(x._guid)._object : dispatcherConnection._dispatchers.get('');
 
   playwrightAPI._toImpl = clientConnection.toImpl;
   return playwrightAPI;

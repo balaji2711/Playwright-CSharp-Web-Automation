@@ -237,14 +237,13 @@ class ElementHandle extends _jsHandle.JSHandle {
     }
 
     const result = await this._elementChannel.screenshot(copy);
-    const buffer = Buffer.from(result.binary, 'base64');
 
     if (options.path) {
       await (0, _fileUtils.mkdirIfNeeded)(options.path);
-      await _fs.default.promises.writeFile(options.path, buffer);
+      await _fs.default.promises.writeFile(options.path, result.binary);
     }
 
-    return buffer;
+    return result.binary;
   }
 
   async $(selector) {
@@ -356,13 +355,13 @@ async function convertInputFiles(files, context) {
     if (typeof item === 'string') {
       return {
         name: _path.default.basename(item),
-        buffer: (await _fs.default.promises.readFile(item)).toString('base64')
+        buffer: await _fs.default.promises.readFile(item)
       };
     } else {
       return {
         name: item.name,
         mimeType: item.mimeType,
-        buffer: item.buffer.toString('base64')
+        buffer: item.buffer
       };
     }
   }));

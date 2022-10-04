@@ -50,17 +50,24 @@ function downloadFile(url, destinationPath, options = {}) {
     url,
     headers: options.userAgent ? {
       'User-Agent': options.userAgent
-    } : undefined
+    } : undefined,
+    timeout: 10_000
   }, response => {
     log(`-- response status code: ${response.statusCode}`);
 
     if (response.statusCode !== 200) {
-      const error = new Error(`Download failed: server returned code ${response.statusCode}. URL: ${url}`); // consume response data to free up memory
+      let content = '';
 
-      response.resume();
-      fulfill({
-        error
-      });
+      const handleError = () => {
+        const error = new Error(`Download failed: server returned code ${response.statusCode} body '${content}'. URL: ${url}`); // consume response data to free up memory
+
+        response.resume();
+        fulfill({
+          error
+        });
+      };
+
+      response.on('data', chunk => content += chunk).on('end', handleError).on('error', handleError);
       return;
     }
 
@@ -87,7 +94,7 @@ function downloadFile(url, destinationPath, options = {}) {
   }
 }
 
-async function download(url, destination, options = {}) {
+async function download(urls, destination, options = {}) {
   const {
     progressBarName = 'file',
     retryCount = 3,
@@ -97,6 +104,8 @@ async function download(url, destination, options = {}) {
 
   for (let attempt = 1; attempt <= retryCount; ++attempt) {
     log(`downloading ${progressBarName} - attempt #${attempt}`);
+    if (!Array.isArray(urls)) urls = [urls];
+    const url = urls[(attempt - 1) % urls.length];
     const {
       error
     } = await downloadFile(url, destination, {
@@ -112,15 +121,7 @@ async function download(url, destination, options = {}) {
 
     const errorMessage = (error === null || error === void 0 ? void 0 : error.message) || '';
     log(`attempt #${attempt} - ERROR: ${errorMessage}`);
-
-    if (attempt < retryCount && (errorMessage.includes('ECONNRESET') || errorMessage.includes('ETIMEDOUT'))) {
-      // Maximum default delay is 3rd retry: 1337.5ms
-      const millis = Math.random() * 200 + 250 * Math.pow(1.5, attempt);
-      log(`sleeping ${millis}ms before retry...`);
-      await new Promise(c => setTimeout(c, millis));
-    } else {
-      throw error;
-    }
+    if (attempt >= retryCount) throw error;
   }
 }
 

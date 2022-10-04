@@ -23,7 +23,7 @@ var _crPage = require("./crPage");
 
 var _crProtocolHelper = require("./crProtocolHelper");
 
-var _crExecutionContext = require("./crExecutionContext");
+var _crServiceWorker = require("./crServiceWorker");
 
 function _getRequireWildcardCache(nodeInterop) { if (typeof WeakMap !== "function") return null; var cacheBabelInterop = new WeakMap(); var cacheNodeInterop = new WeakMap(); return (_getRequireWildcardCache = function (nodeInterop) { return nodeInterop ? cacheNodeInterop : cacheBabelInterop; })(nodeInterop); }
 
@@ -187,7 +187,9 @@ class CRBrowser extends _browser.Browser {
       return;
     }
 
-    if (targetInfo.type === 'other' || !context) {
+    const treatOtherAsPage = targetInfo.type === 'other' && process.env.PW_CHROMIUM_ATTACH_TO_OTHER;
+
+    if (!context || targetInfo.type === 'other' && !treatOtherAsPage) {
       if (waitingForDebugger) {
         // Ideally, detaching should resume any target, but there is a bug in the backend.
         session._sendMayFail('Runtime.runIfWaitingForDebugger').then(() => {
@@ -215,10 +217,10 @@ class CRBrowser extends _browser.Browser {
       return;
     }
 
-    if (targetInfo.type === 'page') {
+    if (targetInfo.type === 'page' || treatOtherAsPage) {
       const opener = targetInfo.openerId ? this._crPages.get(targetInfo.openerId) || null : null;
       const crPage = new _crPage.CRPage(session, targetInfo.targetId, context, opener, {
-        hasUIWindow: true,
+        hasUIWindow: targetInfo.type === 'page',
         isBackgroundPage: false
       });
 
@@ -228,7 +230,7 @@ class CRBrowser extends _browser.Browser {
     }
 
     if (targetInfo.type === 'service_worker') {
-      const serviceWorker = new CRServiceWorker(context, session, targetInfo.url);
+      const serviceWorker = new _crServiceWorker.CRServiceWorker(context, session, targetInfo.url);
 
       this._serviceWorkers.set(targetInfo.targetId, serviceWorker);
 
@@ -345,21 +347,6 @@ class CRBrowser extends _browser.Browser {
 
 exports.CRBrowser = CRBrowser;
 
-class CRServiceWorker extends _page.Worker {
-  constructor(browserContext, session, url) {
-    super(browserContext, url);
-    this._browserContext = void 0;
-    this._browserContext = browserContext;
-    session.once('Runtime.executionContextCreated', event => {
-      this._createExecutionContext(new _crExecutionContext.CRExecutionContext(session, event.context));
-    }); // This might fail if the target is closed before we receive all execution contexts.
-
-    session.send('Runtime.enable', {}).catch(e => {});
-    session.send('Runtime.runIfWaitingForDebugger').catch(e => {});
-  }
-
-}
-
 class CRBrowserContext extends _browserContext.BrowserContext {
   constructor(browser, browserContextId, options) {
     super(browser, options, browserContextId);
@@ -380,7 +367,6 @@ class CRBrowserContext extends _browserContext.BrowserContext {
       }));
     }
 
-    if (this._options.permissions) promises.push(this.grantPermissions(this._options.permissions));
     await Promise.all(promises);
   }
 
@@ -491,18 +477,31 @@ class CRBrowserContext extends _browserContext.BrowserContext {
     this._options.extraHTTPHeaders = headers;
 
     for (const page of this.pages()) await page._delegate.updateExtraHTTPHeaders();
+
+    for (const sw of this.serviceWorkers()) await sw.updateExtraHTTPHeaders(false);
+  }
+
+  async setUserAgent(userAgent) {
+    this._options.userAgent = userAgent;
+
+    for (const page of this.pages()) await page._delegate.updateUserAgent(); // TODO: service workers don't have Emulation domain?
+
   }
 
   async setOffline(offline) {
     this._options.offline = offline;
 
     for (const page of this.pages()) await page._delegate.updateOffline();
+
+    for (const sw of this.serviceWorkers()) await sw.updateOffline(false);
   }
 
   async doSetHTTPCredentials(httpCredentials) {
     this._options.httpCredentials = httpCredentials;
 
     for (const page of this.pages()) await page._delegate.updateHttpCredentials();
+
+    for (const sw of this.serviceWorkers()) await sw.updateHttpCredentials(false);
   }
 
   async doAddInitScript(source) {
@@ -523,6 +522,8 @@ class CRBrowserContext extends _browserContext.BrowserContext {
 
   async doUpdateRequestInterception() {
     for (const page of this.pages()) await page._delegate.updateRequestInterception();
+
+    for (const sw of this.serviceWorkers()) await sw.updateRequestInterception();
   }
 
   async doClose() {

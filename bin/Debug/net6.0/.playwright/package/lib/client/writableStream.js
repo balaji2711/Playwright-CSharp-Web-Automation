@@ -50,7 +50,7 @@ class WritableStreamImpl extends _stream.Writable {
 
   async _write(chunk, encoding, callback) {
     const error = await this._channel.write({
-      binary: chunk.toString('base64')
+      binary: typeof chunk === 'string' ? Buffer.from(chunk) : chunk
     }).catch(e => e);
     callback(error || null);
   }

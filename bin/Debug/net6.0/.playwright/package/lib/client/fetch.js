@@ -51,7 +51,6 @@ class APIRequest {
       extraHTTPHeaders: options.extraHTTPHeaders ? (0, _utils.headersObjectToArray)(options.extraHTTPHeaders) : undefined,
       storageState
     })).request);
-    context._tracing._localUtils = this._playwright._utils;
 
     this._contexts.add(context);
 
@@ -125,9 +124,11 @@ class APIRequestContext extends _channelOwner.ChannelOwner {
       const request = urlOrRequest instanceof network.Request ? urlOrRequest : undefined;
       (0, _utils.assert)(request || typeof urlOrRequest === 'string', 'First argument must be either URL string or Request');
       (0, _utils.assert)((options.data === undefined ? 0 : 1) + (options.form === undefined ? 0 : 1) + (options.multipart === undefined ? 0 : 1) <= 1, `Only one of 'data', 'form' or 'multipart' can be specified`);
+      (0, _utils.assert)(options.maxRedirects === undefined || options.maxRedirects >= 0, `'maxRedirects' should be greater than or equal to '0'`);
       const url = request ? request.url() : urlOrRequest;
       const params = (0, _utils.objectToArray)(options.params);
-      const method = options.method || (request === null || request === void 0 ? void 0 : request.method()); // Cannot call allHeaders() here as the request may be paused inside route handler.
+      const method = options.method || (request === null || request === void 0 ? void 0 : request.method());
+      const maxRedirects = options.maxRedirects; // Cannot call allHeaders() here as the request may be paused inside route handler.
 
       const headersObj = options.headers || (request === null || request === void 0 ? void 0 : request.headers());
       const headers = headersObj ? (0, _utils.headersObjectToArray)(headersObj) : undefined;
@@ -174,19 +175,19 @@ class APIRequestContext extends _channelOwner.ChannelOwner {
       }
 
       if (postDataBuffer === undefined && jsonData === undefined && formData === undefined && multipartData === undefined) postDataBuffer = (request === null || request === void 0 ? void 0 : request.postDataBuffer()) || undefined;
-      const postData = postDataBuffer ? postDataBuffer.toString('base64') : undefined;
       const result = await this._channel.fetch({
         url,
         params,
         method,
         headers,
-        postData,
+        postData: postDataBuffer,
         jsonData,
         formData,
         multipartData,
         timeout: options.timeout,
         failOnStatusCode: options.failOnStatusCode,
-        ignoreHTTPSErrors: options.ignoreHTTPSErrors
+        ignoreHTTPSErrors: options.ignoreHTTPSErrors,
+        maxRedirects: maxRedirects
       });
       return new APIResponse(this, result.response);
     });
@@ -248,7 +249,7 @@ class APIResponse {
         fetchUid: this._fetchUid()
       });
       if (result.binary === undefined) throw new Error('Response has been disposed');
-      return Buffer.from(result.binary, 'base64');
+      return result.binary;
     } catch (e) {
       if (e.message.includes(_errors.kBrowserOrContextClosedError)) throw new Error('Response has been disposed');
       throw e;
@@ -300,7 +301,7 @@ function filePayloadToJson(payload) {
   return {
     name: payload.name,
     mimeType: payload.mimeType,
-    buffer: payload.buffer.toString('base64')
+    buffer: payload.buffer
   };
 }
 
@@ -314,7 +315,7 @@ async function readStreamToJson(stream) {
   const streamPath = Buffer.isBuffer(stream.path) ? stream.path.toString('utf8') : stream.path;
   return {
     name: _path.default.basename(streamPath),
-    buffer: buffer.toString('base64')
+    buffer
   };
 }
 

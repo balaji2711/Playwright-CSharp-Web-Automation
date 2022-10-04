@@ -158,7 +158,7 @@ class Electron extends _instrumentation.SdkObject {
     controller.setLogName('browser');
     return controller.run(async progress => {
       let app = undefined;
-      const electronArguments = ['--inspect=0', '--remote-debugging-port=0', ...args];
+      const electronArguments = [...args, '--inspect=0', '--remote-debugging-port=0'];
 
       if (_os.default.platform() === 'linux') {
         const runningAsRoot = process.geteuid && process.geteuid() === 0;
@@ -242,7 +242,8 @@ class Electron extends _instrumentation.SdkObject {
         browserLogsCollector,
         artifactsDir,
         downloadsPath: artifactsDir,
-        tracesDir: artifactsDir
+        tracesDir: artifactsDir,
+        originalLaunchOptions: {}
       };
       (0, _browserContext.validateBrowserContextOptions)(contextOptions, browserOptions);
       const browser = await _crBrowser.CRBrowser.connect(chromeTransport, browserOptions);

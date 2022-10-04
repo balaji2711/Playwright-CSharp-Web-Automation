@@ -3,17 +3,21 @@
 Object.defineProperty(exports, "__esModule", {
   value: true
 });
-exports.PlaywrightServer = void 0;
+exports.Semaphore = exports.PlaywrightServer = void 0;
 
 var _utilsBundle = require("../utilsBundle");
 
-var http = _interopRequireWildcard(require("http"));
+var _http = _interopRequireDefault(require("http"));
+
+var _playwright = require("../server/playwright");
 
 var _playwrightConnection = require("./playwrightConnection");
 
-function _getRequireWildcardCache(nodeInterop) { if (typeof WeakMap !== "function") return null; var cacheBabelInterop = new WeakMap(); var cacheNodeInterop = new WeakMap(); return (_getRequireWildcardCache = function (nodeInterop) { return nodeInterop ? cacheNodeInterop : cacheBabelInterop; })(nodeInterop); }
+var _utils = require("../utils");
 
-function _interopRequireWildcard(obj, nodeInterop) { if (!nodeInterop && obj && obj.__esModule) { return obj; } if (obj === null || typeof obj !== "object" && typeof obj !== "function") { return { default: obj }; } var cache = _getRequireWildcardCache(nodeInterop); if (cache && cache.has(obj)) { return cache.get(obj); } var newObj = {}; var hasPropertyDescriptor = Object.defineProperty && Object.getOwnPropertyDescriptor; for (var key in obj) { if (key !== "default" && Object.prototype.hasOwnProperty.call(obj, key)) { var desc = hasPropertyDescriptor ? Object.getOwnPropertyDescriptor(obj, key) : null; if (desc && (desc.get || desc.set)) { Object.defineProperty(newObj, key, desc); } else { newObj[key] = obj[key]; } } } newObj.default = obj; if (cache) { cache.set(obj, newObj); } return newObj; }
+var _manualPromise = require("../utils/manualPromise");
+
+function _interopRequireDefault(obj) { return obj && obj.__esModule ? obj : { default: obj }; }
 
 /**
  * Copyright (c) Microsoft Corporation.
@@ -40,32 +44,31 @@ function newLogger() {
 }
 
 class PlaywrightServer {
-  static async startDefault(options = {}) {
-    const {
-      path = '/ws',
-      maxClients = 1,
-      enableSocksProxy = true
-    } = options;
-    return new PlaywrightServer(path, maxClients, enableSocksProxy);
+  constructor(mode, options) {
+    this._preLaunchedPlaywright = null;
+    this._wsServer = void 0;
+    this._mode = void 0;
+    this._options = void 0;
+    this._mode = mode;
+    this._options = options;
+
+    if (mode === 'use-pre-launched-browser') {
+      (0, _utils.assert)(options.preLaunchedBrowser);
+      this._preLaunchedPlaywright = options.preLaunchedBrowser.options.rootSdkObject;
+    }
+
+    if (mode === 'reuse-browser') this._preLaunchedPlaywright = (0, _playwright.createPlaywright)('javascript');
   }
 
-  constructor(path, maxClients, enableSocksProxy, browser) {
-    this._path = void 0;
-    this._maxClients = void 0;
-    this._enableSocksProxy = void 0;
-    this._browser = void 0;
-    this._wsServer = void 0;
-    this._clientsCount = 0;
-    this._path = path;
-    this._maxClients = maxClients;
-    this._enableSocksProxy = enableSocksProxy;
-    this._browser = browser;
+  preLaunchedPlaywright() {
+    return this._preLaunchedPlaywright;
   }
 
   async listen(port = 0) {
-    const server = http.createServer((request, response) => {
+    const server = _http.default.createServer((request, response) => {
       response.end('Running');
     });
+
     server.on('error', error => debugLog(error));
     const wsEndpoint = await new Promise((resolve, reject) => {
       server.listen(port, () => {
@@ -76,38 +79,46 @@ class PlaywrightServer {
           return;
         }
 
-        const wsEndpoint = typeof address === 'string' ? `${address}${this._path}` : `ws://127.0.0.1:${address.port}${this._path}`;
+        const wsEndpoint = typeof address === 'string' ? `${address}${this._options.path}` : `ws://127.0.0.1:${address.port}${this._options.path}`;
         resolve(wsEndpoint);
       }).on('error', reject);
     });
     debugLog('Listening at ' + wsEndpoint);
     this._wsServer = new _utilsBundle.wsServer({
       server,
-      path: this._path
+      path: this._options.path
     });
+    const semaphore = new Semaphore(this._options.maxConcurrentConnections);
 
-    const originalShouldHandle = this._wsServer.shouldHandle.bind(this._wsServer);
-
-    this._wsServer.shouldHandle = request => originalShouldHandle(request) && this._clientsCount < this._maxClients;
-
-    this._wsServer.on('connection', async (ws, request) => {
-      if (this._clientsCount >= this._maxClients) {
+    this._wsServer.on('connection', (ws, request) => {
+      if (semaphore.requested() >= this._options.maxIncomingConnections) {
         ws.close(1013, 'Playwright Server is busy');
         return;
       }
 
       const url = new URL('http://localhost' + (request.url || ''));
       const browserHeader = request.headers['x-playwright-browser'];
-      const browserAlias = url.searchParams.get('browser') || (Array.isArray(browserHeader) ? browserHeader[0] : browserHeader);
-      const headlessHeader = request.headers['x-playwright-headless'];
-      const headlessValue = url.searchParams.get('headless') || (Array.isArray(headlessHeader) ? headlessHeader[0] : headlessHeader);
+      const browserName = url.searchParams.get('browser') || (Array.isArray(browserHeader) ? browserHeader[0] : browserHeader) || null;
       const proxyHeader = request.headers['x-playwright-proxy'];
       const proxyValue = url.searchParams.get('proxy') || (Array.isArray(proxyHeader) ? proxyHeader[0] : proxyHeader);
-      const enableSocksProxy = this._enableSocksProxy && proxyValue === '*';
-      this._clientsCount++;
+      const enableSocksProxy = this._options.enableSocksProxy && proxyValue === '*';
+      const launchOptionsHeader = request.headers['x-playwright-launch-options'] || '';
+      let launchOptions = {};
+
+      try {
+        launchOptions = JSON.parse(Array.isArray(launchOptionsHeader) ? launchOptionsHeader[0] : launchOptionsHeader);
+      } catch (e) {}
+
       const log = newLogger();
       log(`serving connection: ${request.url}`);
-      const connection = new _playwrightConnection.PlaywrightConnection(ws, enableSocksProxy, browserAlias, headlessValue !== '0', this._browser, log, () => this._clientsCount--);
+      const connection = new _playwrightConnection.PlaywrightConnection(semaphore.aquire(), this._mode, ws, {
+        enableSocksProxy,
+        browserName,
+        launchOptions
+      }, {
+        playwright: this._preLaunchedPlaywright,
+        browser: this._options.preLaunchedBrowser || null
+      }, log, () => semaphore.release());
       ws[kConnectionSymbol] = connection;
     });
 
@@ -138,3 +149,43 @@ class PlaywrightServer {
 }
 
 exports.PlaywrightServer = PlaywrightServer;
+
+class Semaphore {
+  constructor(max) {
+    this._max = void 0;
+    this._aquired = 0;
+    this._queue = [];
+    this._max = max;
+  }
+
+  aquire() {
+    const lock = new _manualPromise.ManualPromise();
+
+    this._queue.push(lock);
+
+    this._flush();
+
+    return lock;
+  }
+
+  requested() {
+    return this._aquired + this._queue.length;
+  }
+
+  release() {
+    --this._aquired;
+
+    this._flush();
+  }
+
+  _flush() {
+    while (this._aquired < this._max && this._queue.length) {
+      ++this._aquired;
+
+      this._queue.shift().resolve();
+    }
+  }
+
+}
+
+exports.Semaphore = Semaphore;

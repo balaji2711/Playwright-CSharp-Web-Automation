@@ -46,6 +46,8 @@ var _clientInstrumentation = require("./clientInstrumentation");
 
 var _stackTrace = require("../utils/stackTrace");
 
+var _harRouter = require("./harRouter");
+
 function _interopRequireDefault(obj) { return obj && obj.__esModule ? obj : { default: obj }; }
 
 function _getRequireWildcardCache(nodeInterop) { if (typeof WeakMap !== "function") return null; var cacheBabelInterop = new WeakMap(); var cacheNodeInterop = new WeakMap(); return (_getRequireWildcardCache = function (nodeInterop) { return nodeInterop ? cacheNodeInterop : cacheBabelInterop; })(nodeInterop); }
@@ -95,10 +97,11 @@ class BrowserContext extends _channelOwner.ChannelOwner {
     this._backgroundPages = new Set();
     this._serviceWorkers = new Set();
     this._isChromium = void 0;
+    this._harRecorders = new Map();
     if (parent instanceof _browser.Browser) this._browser = parent;
     this._isChromium = ((_this$_browser = this._browser) === null || _this$_browser === void 0 ? void 0 : _this$_browser._name) === 'chromium';
     this.tracing = _tracing.Tracing.from(initializer.tracing);
-    this.request = _fetch.APIRequestContext.from(initializer.APIRequestContext);
+    this.request = _fetch.APIRequestContext.from(initializer.requestContext);
 
     this._channel.on('bindingCall', ({
       binding
@@ -111,9 +114,8 @@ class BrowserContext extends _channelOwner.ChannelOwner {
     }) => this._onPage(_page.Page.from(page)));
 
     this._channel.on('route', ({
-      route,
-      request
-    }) => this._onRoute(network.Route.from(route), network.Request.from(request)));
+      route
+    }) => this._onRoute(network.Route.from(route)));
 
     this._channel.on('backgroundPage', ({
       page
@@ -163,6 +165,11 @@ class BrowserContext extends _channelOwner.ChannelOwner {
     this._browserType = browserType;
 
     browserType._contexts.add(this);
+
+    if (this._options.recordHar) this._harRecorders.set('', {
+      path: this._options.recordHar.path,
+      content: this._options.recordHar.content
+    });
   }
 
   _onPage(page) {
@@ -204,25 +211,18 @@ class BrowserContext extends _channelOwner.ChannelOwner {
     if (response) response._finishedPromise.resolve();
   }
 
-  _onRoute(route, request) {
-    for (const routeHandler of this._routes) {
-      if (routeHandler.matches(request.url())) {
-        try {
-          routeHandler.handle(route, request);
-        } finally {
-          if (!routeHandler.isActive()) {
-            this._routes.splice(this._routes.indexOf(routeHandler), 1);
+  async _onRoute(route) {
+    const routeHandlers = this._routes.slice();
 
-            if (!this._routes.length) this._wrapApiCall(() => this._disableInterception(), true).catch(() => {});
-          }
-        }
+    for (const routeHandler of routeHandlers) {
+      if (!routeHandler.matches(route.request().url())) continue;
+      if (routeHandler.willExpire()) this._routes.splice(this._routes.indexOf(routeHandler), 1);
+      const handled = await routeHandler.handle(route);
+      if (!this._routes.length) this._wrapApiCall(() => this._disableInterception(), true).catch(() => {});
+      if (handled) return;
+    }
 
-        return;
-      }
-    } // it can race with BrowserContext.close() which then throws since its closed
-
-
-    route._internalContinue();
+    await route._innerContinue(true);
   }
 
   async _onBinding(bindingCall) {
@@ -238,7 +238,7 @@ class BrowserContext extends _channelOwner.ChannelOwner {
     this._wrapApiCall(async () => {
       this._channel.setDefaultNavigationTimeoutNoReply({
         timeout
-      });
+      }).catch(() => {});
     }, true);
   }
 
@@ -248,7 +248,7 @@ class BrowserContext extends _channelOwner.ChannelOwner {
     this._wrapApiCall(async () => {
       this._channel.setDefaultTimeoutNoReply({
         timeout
-      });
+      }).catch(() => {});
     }, true);
   }
 
@@ -326,10 +326,6 @@ class BrowserContext extends _channelOwner.ChannelOwner {
     });
   }
 
-  async _removeInitScripts() {
-    await this._channel.removeInitScripts();
-  }
-
   async exposeBinding(name, callback, options = {}) {
     await this._channel.exposeBinding({
       name,
@@ -337,14 +333,6 @@ class BrowserContext extends _channelOwner.ChannelOwner {
     });
 
     this._bindings.set(name, callback);
-  }
-
-  async _removeExposedBindings() {
-    for (const key of this._bindings.keys()) {
-      if (!key.startsWith('__pw_')) this._bindings.delete(key);
-    }
-
-    await this._channel.removeExposedBindings();
   }
 
   async exposeFunction(name, callback) {
@@ -365,14 +353,40 @@ class BrowserContext extends _channelOwner.ChannelOwner {
     });
   }
 
+  async _recordIntoHAR(har, page, options = {}) {
+    const {
+      harId
+    } = await this._channel.harStart({
+      page: page === null || page === void 0 ? void 0 : page._channel,
+      options: prepareRecordHarOptions({
+        path: har,
+        content: 'attach',
+        mode: 'minimal',
+        urlFilter: options.url
+      })
+    });
+
+    this._harRecorders.set(harId, {
+      path: har,
+      content: 'attach'
+    });
+  }
+
+  async routeFromHAR(har, options = {}) {
+    if (options.update) {
+      await this._recordIntoHAR(har, null, options);
+      return;
+    }
+
+    const harRouter = await _harRouter.HarRouter.create(this._connection.localUtils(), har, options.notFound || 'abort', {
+      urlMatch: options.url
+    });
+    harRouter.addContextRoute(this);
+  }
+
   async unroute(url, handler) {
     this._routes = this._routes.filter(route => route.url !== url || handler && route.handler !== handler);
     if (!this._routes.length) await this._disableInterception();
-  }
-
-  async _unrouteAll() {
-    this._routes = [];
-    await this._disableInterception();
   }
 
   async _disableInterception() {
@@ -442,12 +456,27 @@ class BrowserContext extends _channelOwner.ChannelOwner {
 
         await ((_this$_browserType2 = this._browserType) === null || _this$_browserType2 === void 0 ? void 0 : (_this$_browserType2$_ = _this$_browserType2._onWillCloseContext) === null || _this$_browserType2$_ === void 0 ? void 0 : _this$_browserType2$_.call(_this$_browserType2, this));
 
-        if (this._options.recordHar) {
-          const har = await this._channel.harExport();
+        for (const [harId, harParams] of this._harRecorders) {
+          const har = await this._channel.harExport({
+            harId
+          });
 
-          const artifact = _artifact.Artifact.from(har.artifact);
+          const artifact = _artifact.Artifact.from(har.artifact); // Server side will compress artifact if content is attach or if file is .zip.
 
-          await artifact.saveAs(this._options.recordHar.path);
+
+          const isCompressed = harParams.content === 'attach' || harParams.path.endsWith('.zip');
+          const needCompressed = harParams.path.endsWith('.zip');
+
+          if (isCompressed && !needCompressed) {
+            await artifact.saveAs(harParams.path + '.tmp');
+            await this._connection.localUtils()._channel.harUnzip({
+              zipFile: harParams.path + '.tmp',
+              harFile: harParams.path
+            });
+          } else {
+            await artifact.saveAs(harParams.path);
+          }
+
           await artifact.delete();
         }
       }, true);
@@ -461,12 +490,6 @@ class BrowserContext extends _channelOwner.ChannelOwner {
 
   async _enableRecorder(params) {
     await this._channel.recorderSupplementEnable(params);
-  }
-
-  async _resetForReuse() {
-    await this._unrouteAll();
-    await this._removeInitScripts();
-    await this._removeExposedBindings();
   }
 
 }
@@ -484,6 +507,18 @@ async function prepareStorageState(options) {
   }
 }
 
+function prepareRecordHarOptions(options) {
+  if (!options) return;
+  return {
+    path: options.path,
+    content: options.content || (options.omitContent ? 'omit' : undefined),
+    urlGlob: (0, _utils.isString)(options.urlFilter) ? options.urlFilter : undefined,
+    urlRegexSource: (0, _utils.isRegExp)(options.urlFilter) ? options.urlFilter.source : undefined,
+    urlRegexFlags: (0, _utils.isRegExp)(options.urlFilter) ? options.urlFilter.flags : undefined,
+    mode: options.mode
+  };
+}
+
 async function prepareBrowserContextParams(options) {
   if (options.videoSize && !options.videosPath) throw new Error(`"videoSize" option requires "videosPath" to be specified`);
   if (options.extraHTTPHeaders) network.validateHeaders(options.extraHTTPHeaders);
@@ -491,7 +526,9 @@ async function prepareBrowserContextParams(options) {
     viewport: options.viewport === null ? undefined : options.viewport,
     noDefaultViewport: options.viewport === null,
     extraHTTPHeaders: options.extraHTTPHeaders ? (0, _utils.headersObjectToArray)(options.extraHTTPHeaders) : undefined,
-    storageState: await prepareStorageState(options)
+    storageState: await prepareStorageState(options),
+    serviceWorkers: options.serviceWorkers,
+    recordHar: prepareRecordHarOptions(options.recordHar)
   };
 
   if (!contextParams.recordVideo && options.videosPath) {

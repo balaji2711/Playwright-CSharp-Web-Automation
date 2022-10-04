@@ -17,8 +17,6 @@ var _electron = require("./electron");
 
 var _fetch = require("./fetch");
 
-var _localUtils = require("./localUtils");
-
 var _selectors = require("./selectors");
 
 /**
@@ -48,7 +46,6 @@ class Playwright extends _channelOwner.ChannelOwner {
     this.selectors = void 0;
     this.request = void 0;
     this.errors = void 0;
-    this._utils = void 0;
     this._socksProxyHandler = void 0;
     this.request = new _fetch.APIRequest(this);
     this.chromium = _browserType.BrowserType.from(initializer.chromium);
@@ -70,7 +67,6 @@ class Playwright extends _channelOwner.ChannelOwner {
     this.errors = {
       TimeoutError: _errors.TimeoutError
     };
-    this._utils = _localUtils.LocalUtils.from(initializer.utils);
 
     const selectorsOwner = _selectors.SelectorsOwner.from(initializer.selectors);
 

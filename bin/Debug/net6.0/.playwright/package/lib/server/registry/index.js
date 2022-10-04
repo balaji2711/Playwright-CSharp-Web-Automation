@@ -26,7 +26,7 @@ var fs = _interopRequireWildcard(require("fs"));
 
 var _utilsBundle = require("../../utilsBundle");
 
-var _ubuntuVersion = require("../../utils/ubuntuVersion");
+var _linuxUtils = require("../../utils/linuxUtils");
 
 var _netUtils = require("../../common/netUtils");
 
@@ -70,6 +70,15 @@ const PACKAGE_PATH = _path.default.join(__dirname, '..', '..', '..');
 
 const BIN_PATH = _path.default.join(__dirname, '..', '..', '..', 'bin');
 
+const PLAYWRIGHT_CDN_MIRRORS = ['https://playwright.azureedge.net', 'https://playwright-akamai.azureedge.net', 'https://playwright-verizon.azureedge.net'];
+
+if (process.env.PW_TEST_CDN_THAT_SHOULD_WORK) {
+  for (let i = 0; i < PLAYWRIGHT_CDN_MIRRORS.length; i++) {
+    const cdn = PLAYWRIGHT_CDN_MIRRORS[i];
+    if (cdn !== process.env.PW_TEST_CDN_THAT_SHOULD_WORK) PLAYWRIGHT_CDN_MIRRORS[i] = cdn + '.does-not-resolve.playwright.dev';
+  }
+}
+
 const EXECUTABLE_PATHS = {
   'chromium': {
     'linux': ['chrome-linux', 'chrome'],
@@ -99,8 +108,11 @@ const DOWNLOAD_PATHS = {
     'generic-linux-arm64': 'builds/chromium/%s/chromium-linux-arm64.zip',
     'ubuntu18.04': 'builds/chromium/%s/chromium-linux.zip',
     'ubuntu20.04': 'builds/chromium/%s/chromium-linux.zip',
+    'ubuntu22.04': 'builds/chromium/%s/chromium-linux.zip',
     'ubuntu18.04-arm64': 'builds/chromium/%s/chromium-linux-arm64.zip',
     'ubuntu20.04-arm64': 'builds/chromium/%s/chromium-linux-arm64.zip',
+    'ubuntu22.04-arm64': 'builds/chromium/%s/chromium-linux-arm64.zip',
+    'debian11': 'builds/chromium/%s/chromium-linux.zip',
     'mac10.13': 'builds/chromium/%s/chromium-mac.zip',
     'mac10.14': 'builds/chromium/%s/chromium-mac.zip',
     'mac10.15': 'builds/chromium/%s/chromium-mac.zip',
@@ -116,8 +128,11 @@ const DOWNLOAD_PATHS = {
     'generic-linux-arm64': 'builds/chromium-tip-of-tree/%s/chromium-tip-of-tree-linux-arm64.zip',
     'ubuntu18.04': 'builds/chromium-tip-of-tree/%s/chromium-tip-of-tree-linux.zip',
     'ubuntu20.04': 'builds/chromium-tip-of-tree/%s/chromium-tip-of-tree-linux.zip',
+    'ubuntu22.04': 'builds/chromium-tip-of-tree/%s/chromium-tip-of-tree-linux.zip',
     'ubuntu18.04-arm64': 'builds/chromium-tip-of-tree/%s/chromium-tip-of-tree-linux-arm64.zip',
     'ubuntu20.04-arm64': 'builds/chromium-tip-of-tree/%s/chromium-tip-of-tree-linux-arm64.zip',
+    'ubuntu22.04-arm64': 'builds/chromium-tip-of-tree/%s/chromium-tip-of-tree-linux-arm64.zip',
+    'debian11': 'builds/chromium-tip-of-tree/%s/chromium-tip-of-tree-linux.zip',
     'mac10.13': 'builds/chromium-tip-of-tree/%s/chromium-tip-of-tree-mac.zip',
     'mac10.14': 'builds/chromium-tip-of-tree/%s/chromium-tip-of-tree-mac.zip',
     'mac10.15': 'builds/chromium-tip-of-tree/%s/chromium-tip-of-tree-mac.zip',
@@ -133,8 +148,11 @@ const DOWNLOAD_PATHS = {
     'generic-linux-arm64': 'builds/chromium/%s/chromium-with-symbols-linux-arm64.zip',
     'ubuntu18.04': 'builds/chromium/%s/chromium-with-symbols-linux.zip',
     'ubuntu20.04': 'builds/chromium/%s/chromium-with-symbols-linux.zip',
+    'ubuntu22.04': 'builds/chromium/%s/chromium-with-symbols-linux.zip',
     'ubuntu18.04-arm64': 'builds/chromium/%s/chromium-with-symbols-linux-arm64.zip',
     'ubuntu20.04-arm64': 'builds/chromium/%s/chromium-with-symbols-linux-arm64.zip',
+    'ubuntu22.04-arm64': 'builds/chromium/%s/chromium-with-symbols-linux-arm64.zip',
+    'debian11': 'builds/chromium/%s/chromium-with-symbols-linux.zip',
     'mac10.13': 'builds/chromium/%s/chromium-with-symbols-mac.zip',
     'mac10.14': 'builds/chromium/%s/chromium-with-symbols-mac.zip',
     'mac10.15': 'builds/chromium/%s/chromium-with-symbols-mac.zip',
@@ -150,8 +168,11 @@ const DOWNLOAD_PATHS = {
     'generic-linux-arm64': 'builds/firefox/%s/firefox-ubuntu-20.04-arm64.zip',
     'ubuntu18.04': 'builds/firefox/%s/firefox-ubuntu-18.04.zip',
     'ubuntu20.04': 'builds/firefox/%s/firefox-ubuntu-20.04.zip',
+    'ubuntu22.04': 'builds/firefox/%s/firefox-ubuntu-22.04.zip',
     'ubuntu18.04-arm64': undefined,
     'ubuntu20.04-arm64': 'builds/firefox/%s/firefox-ubuntu-20.04-arm64.zip',
+    'ubuntu22.04-arm64': 'builds/firefox/%s/firefox-ubuntu-22.04-arm64.zip',
+    'debian11': 'builds/firefox/%s/firefox-debian-11.zip',
     'mac10.13': 'builds/firefox/%s/firefox-mac-11.zip',
     'mac10.14': 'builds/firefox/%s/firefox-mac-11.zip',
     'mac10.15': 'builds/firefox/%s/firefox-mac-11.zip',
@@ -167,8 +188,11 @@ const DOWNLOAD_PATHS = {
     'generic-linux-arm64': undefined,
     'ubuntu18.04': 'builds/firefox-beta/%s/firefox-beta-ubuntu-18.04.zip',
     'ubuntu20.04': 'builds/firefox-beta/%s/firefox-beta-ubuntu-20.04.zip',
+    'ubuntu22.04': 'builds/firefox-beta/%s/firefox-beta-ubuntu-22.04.zip',
     'ubuntu18.04-arm64': undefined,
     'ubuntu20.04-arm64': undefined,
+    'ubuntu22.04-arm64': 'builds/firefox-beta/%s/firefox-beta-ubuntu-22.04-arm64.zip',
+    'debian11': 'builds/firefox-beta/%s/firefox-beta-debian-11.zip',
     'mac10.13': 'builds/firefox-beta/%s/firefox-beta-mac-11.zip',
     'mac10.14': 'builds/firefox-beta/%s/firefox-beta-mac-11.zip',
     'mac10.15': 'builds/firefox-beta/%s/firefox-beta-mac-11.zip',
@@ -184,8 +208,11 @@ const DOWNLOAD_PATHS = {
     'generic-linux-arm64': 'builds/webkit/%s/webkit-ubuntu-20.04-arm64.zip',
     'ubuntu18.04': 'builds/webkit/%s/webkit-ubuntu-18.04.zip',
     'ubuntu20.04': 'builds/webkit/%s/webkit-ubuntu-20.04.zip',
+    'ubuntu22.04': 'builds/webkit/%s/webkit-ubuntu-22.04.zip',
     'ubuntu18.04-arm64': undefined,
     'ubuntu20.04-arm64': 'builds/webkit/%s/webkit-ubuntu-20.04-arm64.zip',
+    'ubuntu22.04-arm64': 'builds/webkit/%s/webkit-ubuntu-22.04-arm64.zip',
+    'debian11': 'builds/webkit/%s/webkit-debian-11.zip',
     'mac10.13': undefined,
     'mac10.14': 'builds/deprecated-webkit-mac-10.14/%s/deprecated-webkit-mac-10.14.zip',
     'mac10.15': 'builds/webkit/%s/webkit-mac-10.15.zip',
@@ -201,8 +228,11 @@ const DOWNLOAD_PATHS = {
     'generic-linux-arm64': 'builds/ffmpeg/%s/ffmpeg-linux-arm64.zip',
     'ubuntu18.04': 'builds/ffmpeg/%s/ffmpeg-linux.zip',
     'ubuntu20.04': 'builds/ffmpeg/%s/ffmpeg-linux.zip',
+    'ubuntu22.04': 'builds/ffmpeg/%s/ffmpeg-linux.zip',
     'ubuntu18.04-arm64': 'builds/ffmpeg/%s/ffmpeg-linux-arm64.zip',
     'ubuntu20.04-arm64': 'builds/ffmpeg/%s/ffmpeg-linux-arm64.zip',
+    'ubuntu22.04-arm64': 'builds/ffmpeg/%s/ffmpeg-linux-arm64.zip',
+    'debian11': 'builds/ffmpeg/%s/ffmpeg-linux.zip',
     'mac10.13': 'builds/ffmpeg/%s/ffmpeg-mac.zip',
     'mac10.14': 'builds/ffmpeg/%s/ffmpeg-mac.zip',
     'mac10.15': 'builds/ffmpeg/%s/ffmpeg-mac.zip',
@@ -284,7 +314,7 @@ class Registry {
 
     const findExecutablePath = (dir, name) => {
       let tokens = undefined;
-      if (_hostPlatform.hostPlatform.startsWith('ubuntu') || _hostPlatform.hostPlatform.startsWith('generic-linux')) tokens = EXECUTABLE_PATHS[name]['linux'];else if (_hostPlatform.hostPlatform.startsWith('mac')) tokens = EXECUTABLE_PATHS[name]['mac'];else if (_hostPlatform.hostPlatform.startsWith('win')) tokens = EXECUTABLE_PATHS[name]['win'];
+      if (process.platform === 'linux') tokens = EXECUTABLE_PATHS[name]['linux'];else if (process.platform === 'darwin') tokens = EXECUTABLE_PATHS[name]['mac'];else if (process.platform === 'win32') tokens = EXECUTABLE_PATHS[name]['win'];
       return tokens ? _path.default.join(dir, ...tokens) : undefined;
     };
 
@@ -293,7 +323,10 @@ class Registry {
       const installCommand = buildPlaywrightCLICommand(sdkLanguage, `install${installByDefault ? '' : ' ' + name}`);
 
       if (!(0, _fileUtils.canAccessFile)(e)) {
-        const prettyMessage = [`Looks like ${sdkLanguage === 'javascript' ? 'Playwright Test or ' : ''}Playwright was just installed or updated.`, `Please run the following command to download new browser${installByDefault ? 's' : ''}:`, ``, `    ${installCommand}`, ``, `<3 Playwright Team`].join('\n');
+        const currentDockerVersion = (0, _dependencies.readDockerVersionSync)();
+        const preferredDockerVersion = currentDockerVersion ? (0, _dependencies.dockerVersion)(currentDockerVersion.dockerImageNameTemplate) : null;
+        const isOutdatedDockerImage = currentDockerVersion && preferredDockerVersion && currentDockerVersion.dockerImageName !== preferredDockerVersion.dockerImageName;
+        const prettyMessage = isOutdatedDockerImage ? [`Looks like ${sdkLanguage === 'javascript' ? 'Playwright Test or ' : ''}Playwright was just updated to ${preferredDockerVersion.driverVersion}.`, `Please update docker image as well.`, `-  current: ${currentDockerVersion.dockerImageName}`, `- required: ${preferredDockerVersion.dockerImageName}`, ``, `<3 Playwright Team`].join('\n') : [`Looks like ${sdkLanguage === 'javascript' ? 'Playwright Test or ' : ''}Playwright was just installed or updated.`, `Please run the following command to download new browser${installByDefault ? 's' : ''}:`, ``, `    ${installCommand}`, ``, `<3 Playwright Team`].join('\n');
         throw new Error(`Executable doesn't exist at ${e}\n${(0, _utils.wrapInASCIIBox)(prettyMessage, 1)}`);
       }
 
@@ -313,7 +346,9 @@ class Registry {
       executablePathOrDie: sdkLanguage => executablePathOrDie('chromium', chromiumExecutable, chromium.installByDefault, sdkLanguage),
       installType: chromium.installByDefault ? 'download-by-default' : 'download-on-demand',
       validateHostRequirements: sdkLanguage => this._validateHostRequirements(sdkLanguage, 'chromium', chromium.dir, ['chrome-linux'], [], ['chrome-win']),
-      _install: () => this._downloadExecutable(chromium, chromiumExecutable, DOWNLOAD_PATHS['chromium'][_hostPlatform.hostPlatform], 'PLAYWRIGHT_CHROMIUM_DOWNLOAD_HOST'),
+      downloadURLs: this._downloadURLs(chromium),
+      browserVersion: chromium.browserVersion,
+      _install: () => this._downloadExecutable(chromium, chromiumExecutable),
       _dependencyGroup: 'chromium',
       _isHermeticInstallation: true
     });
@@ -330,7 +365,9 @@ class Registry {
       executablePathOrDie: sdkLanguage => executablePathOrDie('chromium-with-symbols', chromiumWithSymbolsExecutable, chromiumWithSymbols.installByDefault, sdkLanguage),
       installType: chromiumWithSymbols.installByDefault ? 'download-by-default' : 'download-on-demand',
       validateHostRequirements: sdkLanguage => this._validateHostRequirements(sdkLanguage, 'chromium', chromiumWithSymbols.dir, ['chrome-linux'], [], ['chrome-win']),
-      _install: () => this._downloadExecutable(chromiumWithSymbols, chromiumWithSymbolsExecutable, DOWNLOAD_PATHS['chromium-with-symbols'][_hostPlatform.hostPlatform], 'PLAYWRIGHT_CHROMIUM_DOWNLOAD_HOST'),
+      downloadURLs: this._downloadURLs(chromiumWithSymbols),
+      browserVersion: chromiumWithSymbols.browserVersion,
+      _install: () => this._downloadExecutable(chromiumWithSymbols, chromiumWithSymbolsExecutable),
       _dependencyGroup: 'chromium',
       _isHermeticInstallation: true
     });
@@ -347,7 +384,9 @@ class Registry {
       executablePathOrDie: sdkLanguage => executablePathOrDie('chromium-tip-of-tree', chromiumTipOfTreeExecutable, chromiumTipOfTree.installByDefault, sdkLanguage),
       installType: chromiumTipOfTree.installByDefault ? 'download-by-default' : 'download-on-demand',
       validateHostRequirements: sdkLanguage => this._validateHostRequirements(sdkLanguage, 'chromium', chromiumTipOfTree.dir, ['chrome-linux'], [], ['chrome-win']),
-      _install: () => this._downloadExecutable(chromiumTipOfTree, chromiumTipOfTreeExecutable, DOWNLOAD_PATHS['chromium-tip-of-tree'][_hostPlatform.hostPlatform], 'PLAYWRIGHT_CHROMIUM_DOWNLOAD_HOST'),
+      downloadURLs: this._downloadURLs(chromiumTipOfTree),
+      browserVersion: chromiumTipOfTree.browserVersion,
+      _install: () => this._downloadExecutable(chromiumTipOfTree, chromiumTipOfTreeExecutable),
       _dependencyGroup: 'chromium',
       _isHermeticInstallation: true
     });
@@ -432,7 +471,9 @@ class Registry {
       executablePathOrDie: sdkLanguage => executablePathOrDie('firefox', firefoxExecutable, firefox.installByDefault, sdkLanguage),
       installType: firefox.installByDefault ? 'download-by-default' : 'download-on-demand',
       validateHostRequirements: sdkLanguage => this._validateHostRequirements(sdkLanguage, 'firefox', firefox.dir, ['firefox'], [], ['firefox']),
-      _install: () => this._downloadExecutable(firefox, firefoxExecutable, DOWNLOAD_PATHS['firefox'][_hostPlatform.hostPlatform], 'PLAYWRIGHT_FIREFOX_DOWNLOAD_HOST'),
+      downloadURLs: this._downloadURLs(firefox),
+      browserVersion: firefox.browserVersion,
+      _install: () => this._downloadExecutable(firefox, firefoxExecutable),
       _dependencyGroup: 'firefox',
       _isHermeticInstallation: true
     });
@@ -449,7 +490,9 @@ class Registry {
       executablePathOrDie: sdkLanguage => executablePathOrDie('firefox-beta', firefoxBetaExecutable, firefoxBeta.installByDefault, sdkLanguage),
       installType: firefoxBeta.installByDefault ? 'download-by-default' : 'download-on-demand',
       validateHostRequirements: sdkLanguage => this._validateHostRequirements(sdkLanguage, 'firefox', firefoxBeta.dir, ['firefox'], [], ['firefox']),
-      _install: () => this._downloadExecutable(firefoxBeta, firefoxBetaExecutable, DOWNLOAD_PATHS['firefox-beta'][_hostPlatform.hostPlatform], 'PLAYWRIGHT_FIREFOX_DOWNLOAD_HOST'),
+      downloadURLs: this._downloadURLs(firefoxBeta),
+      browserVersion: firefoxBeta.browserVersion,
+      _install: () => this._downloadExecutable(firefoxBeta, firefoxBetaExecutable),
       _dependencyGroup: 'firefox',
       _isHermeticInstallation: true
     });
@@ -467,7 +510,9 @@ class Registry {
       executablePathOrDie: sdkLanguage => executablePathOrDie('webkit', webkitExecutable, webkit.installByDefault, sdkLanguage),
       installType: webkit.installByDefault ? 'download-by-default' : 'download-on-demand',
       validateHostRequirements: sdkLanguage => this._validateHostRequirements(sdkLanguage, 'webkit', webkit.dir, webkitLinuxLddDirectories, ['libGLESv2.so.2', 'libx264.so'], ['']),
-      _install: () => this._downloadExecutable(webkit, webkitExecutable, DOWNLOAD_PATHS['webkit'][_hostPlatform.hostPlatform], 'PLAYWRIGHT_WEBKIT_DOWNLOAD_HOST'),
+      downloadURLs: this._downloadURLs(webkit),
+      browserVersion: webkit.browserVersion,
+      _install: () => this._downloadExecutable(webkit, webkitExecutable),
       _dependencyGroup: 'webkit',
       _isHermeticInstallation: true
     });
@@ -484,7 +529,8 @@ class Registry {
       executablePathOrDie: sdkLanguage => executablePathOrDie('ffmpeg', ffmpegExecutable, ffmpeg.installByDefault, sdkLanguage),
       installType: ffmpeg.installByDefault ? 'download-by-default' : 'download-on-demand',
       validateHostRequirements: () => Promise.resolve(),
-      _install: () => this._downloadExecutable(ffmpeg, ffmpegExecutable, DOWNLOAD_PATHS['ffmpeg'][_hostPlatform.hostPlatform], 'PLAYWRIGHT_FFMPEG_DOWNLOAD_HOST'),
+      downloadURLs: this._downloadURLs(ffmpeg),
+      _install: () => this._downloadExecutable(ffmpeg, ffmpegExecutable),
       _dependencyGroup: 'tools',
       _isHermeticInstallation: true
     });
@@ -557,8 +603,8 @@ class Registry {
       return;
     }
 
-    const ubuntuVersion = await (0, _ubuntuVersion.getUbuntuVersion)();
-    if (browserName === 'firefox' && ubuntuVersion === '16.04') throw new Error(`Cannot launch Firefox on Ubuntu 16.04! Minimum required Ubuntu version for Firefox browser is 18.04`);
+    const distributionInfo = await (0, _linuxUtils.getLinuxDistributionInfo)();
+    if (browserName === 'firefox' && (distributionInfo === null || distributionInfo === void 0 ? void 0 : distributionInfo.id) === 'ubuntu' && (distributionInfo === null || distributionInfo === void 0 ? void 0 : distributionInfo.version) === '16.04') throw new Error(`Cannot launch Firefox on Ubuntu 16.04! Minimum required Ubuntu version for Firefox browser is 18.04`);
     if (os.platform() === 'linux') return await (0, _dependencies.validateDependenciesLinux)(sdkLanguage, linuxLddDirectories.map(d => _path.default.join(browserDirectory, d)), dlOpenLibraries);
     if (os.platform() === 'win32' && os.arch() === 'x64') return await (0, _dependencies.validateDependenciesWindows)(windowsExeAndDllDirectories.map(d => _path.default.join(browserDirectory, d)));
   }
@@ -637,18 +683,29 @@ class Registry {
     }
   }
 
-  async _downloadExecutable(descriptor, executablePath, downloadPathTemplate, downloadHostEnv) {
-    if (!downloadPathTemplate || !executablePath) throw new Error(`ERROR: Playwright does not support ${descriptor.name} on ${_hostPlatform.hostPlatform}`);
-    if (_hostPlatform.hostPlatform === 'generic-linux' || _hostPlatform.hostPlatform === 'generic-linux-arm64') (0, _browserFetcher.logPolitely)('BEWARE: your OS is not officially supported by Playwright; downloading Ubuntu build as a fallback.');
-    const downloadHost = downloadHostEnv && (0, _utils.getFromENV)(downloadHostEnv) || (0, _utils.getFromENV)('PLAYWRIGHT_DOWNLOAD_HOST') || 'https://playwright.azureedge.net';
+  _downloadURLs(descriptor) {
+    const downloadPathTemplate = DOWNLOAD_PATHS[descriptor.name][_hostPlatform.hostPlatform];
+    if (!downloadPathTemplate) return [];
     const downloadPath = util.format(downloadPathTemplate, descriptor.revision);
-    const downloadURL = `${downloadHost}/${downloadPath}`;
+    let downloadURLs = PLAYWRIGHT_CDN_MIRRORS.map(mirror => `${mirror}/${downloadPath}`);
+    let downloadHostEnv;
+    if (descriptor.name.startsWith('chromium')) downloadHostEnv = 'PLAYWRIGHT_CHROMIUM_DOWNLOAD_HOST';else if (descriptor.name.startsWith('firefox')) downloadHostEnv = 'PLAYWRIGHT_FIREFOX_DOWNLOAD_HOST';else if (descriptor.name.startsWith('webkit')) downloadHostEnv = 'PLAYWRIGHT_WEBKIT_DOWNLOAD_HOST';
+    const customHostOverride = downloadHostEnv && (0, _utils.getFromENV)(downloadHostEnv) || (0, _utils.getFromENV)('PLAYWRIGHT_DOWNLOAD_HOST');
+    if (customHostOverride) downloadURLs = [`${customHostOverride}/${downloadPath}`];
+    return downloadURLs;
+  }
+
+  async _downloadExecutable(descriptor, executablePath) {
+    const downloadURLs = this._downloadURLs(descriptor);
+
+    if (!downloadURLs.length || !executablePath) throw new Error(`ERROR: Playwright does not support ${descriptor.name} on ${_hostPlatform.hostPlatform}`);
+    if (_hostPlatform.hostPlatform === 'generic-linux' || _hostPlatform.hostPlatform === 'generic-linux-arm64') (0, _browserFetcher.logPolitely)('BEWARE: your OS is not officially supported by Playwright; downloading fallback build.');
     const displayName = descriptor.name.split('-').map(word => {
       return word === 'ffmpeg' ? 'FFMPEG' : word.charAt(0).toUpperCase() + word.slice(1);
     }).join(' ');
     const title = descriptor.browserVersion ? `${displayName} ${descriptor.browserVersion} (playwright build v${descriptor.revision})` : `${displayName} playwright build v${descriptor.revision}`;
     const downloadFileName = `playwright-download-${descriptor.name}-${_hostPlatform.hostPlatform}-${descriptor.revision}.zip`;
-    await (0, _browserFetcher.downloadBrowserWithProgressBar)(title, descriptor.dir, executablePath, downloadURL, downloadFileName).catch(e => {
+    await (0, _browserFetcher.downloadBrowserWithProgressBar)(title, descriptor.dir, executablePath, downloadURLs, downloadFileName).catch(e => {
       throw new Error(`Failed to download ${title}, caused by\n${e.stack}`);
     });
     await fs.promises.writeFile(markerFilePath(descriptor.dir), '');
@@ -658,15 +715,15 @@ class Registry {
     const scriptArgs = [];
 
     if (process.platform !== 'linux') {
-      const products = JSON.parse(await (0, _netUtils.fetchData)({
+      const products = lowercaseAllKeys(JSON.parse(await (0, _netUtils.fetchData)({
         url: 'https://edgeupdates.microsoft.com/api/products'
-      }));
+      })));
       const productName = {
         'msedge': 'Stable',
         'msedge-beta': 'Beta',
         'msedge-dev': 'Dev'
       }[channel];
-      const product = products.find(product => product.Product === productName);
+      const product = products.find(product => product.product === productName);
       const searchConfig = {
         darwin: {
           platform: 'MacOS',
@@ -679,9 +736,9 @@ class Registry {
           artifact: 'msi'
         }
       }[process.platform];
-      const release = searchConfig ? product.Releases.find(release => release.Platform === searchConfig.platform && release.Architecture === searchConfig.arch) : null;
-      const artifact = release ? release.Artifacts.find(artifact => artifact.ArtifactName === searchConfig.artifact) : null;
-      if (artifact) scriptArgs.push(artifact.Location
+      const release = searchConfig ? product.releases.find(release => release.platform === searchConfig.platform && release.architecture === searchConfig.arch) : null;
+      const artifact = release ? release.artifacts.find(artifact => artifact.artifactname === searchConfig.artifact) : null;
+      if (artifact) scriptArgs.push(artifact.location
       /* url */
       );else throw new Error(`Cannot install ${channel} on ${process.platform}`);
     }
@@ -789,7 +846,7 @@ function buildPlaywrightCLICommand(sdkLanguage, parameters) {
       return `mvn exec:java -e -Dexec.mainClass=com.microsoft.playwright.CLI -Dexec.args="${parameters}"`;
 
     case 'csharp':
-      return `pwsh bin\\Debug\\netX\\playwright.ps1 ${parameters}`;
+      return `pwsh bin/Debug/netX/playwright.ps1 ${parameters}`;
 
     default:
       return `npx playwright ${parameters}`;
@@ -841,6 +898,16 @@ function findChromiumChannel(sdkLanguage) {
   }
 
   return channel;
+}
+
+function lowercaseAllKeys(json) {
+  if (typeof json !== 'object' || !json) return json;
+  if (Array.isArray(json)) return json.map(lowercaseAllKeys);
+  const result = {};
+
+  for (const [key, value] of Object.entries(json)) result[key.toLowerCase()] = lowercaseAllKeys(value);
+
+  return result;
 }
 
 const registry = new Registry(require('../../../browsers.json'));

@@ -32,14 +32,14 @@ var _elementHandlerDispatcher = require("./elementHandlerDispatcher");
  */
 class ElectronDispatcher extends _dispatcher.Dispatcher {
   constructor(scope, electron) {
-    super(scope, electron, 'Electron', {}, true);
+    super(scope, electron, 'Electron', {});
     this._type_Electron = true;
   }
 
   async launch(params) {
     const electronApplication = await this._object.launch(params);
     return {
-      electronApplication: new ElectronApplicationDispatcher(this._scope, electronApplication)
+      electronApplication: new ElectronApplicationDispatcher(this, electronApplication)
     };
   }
 
@@ -51,10 +51,10 @@ class ElectronApplicationDispatcher extends _dispatcher.Dispatcher {
   constructor(scope, electronApplication) {
     super(scope, electronApplication, 'ElectronApplication', {
       context: new _browserContextDispatcher.BrowserContextDispatcher(scope, electronApplication.context())
-    }, true);
+    });
     this._type_EventTarget = true;
     this._type_ElectronApplication = true;
-    electronApplication.on(_electron.ElectronApplication.Events.Close, () => {
+    this.addObjectListener(_electron.ElectronApplication.Events.Close, () => {
       this._dispatchEvent('close');
 
       this._dispose();
@@ -64,7 +64,7 @@ class ElectronApplicationDispatcher extends _dispatcher.Dispatcher {
   async browserWindow(params) {
     const handle = await this._object.browserWindow(params.page.page());
     return {
-      handle: _elementHandlerDispatcher.ElementHandleDispatcher.fromJSHandle(this._scope, handle)
+      handle: _elementHandlerDispatcher.ElementHandleDispatcher.fromJSHandle(this, handle)
     };
   }
 
@@ -83,7 +83,7 @@ class ElectronApplicationDispatcher extends _dispatcher.Dispatcher {
     /* returnByValue */
     , (0, _jsHandleDispatcher.parseArgument)(params.arg));
     return {
-      handle: _elementHandlerDispatcher.ElementHandleDispatcher.fromJSHandle(this._scope, result)
+      handle: _elementHandlerDispatcher.ElementHandleDispatcher.fromJSHandle(this, result)
     };
   }
 

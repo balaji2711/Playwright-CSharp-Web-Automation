@@ -76,7 +76,10 @@ class Page extends _instrumentation.SdkObject {
     this.touchscreen = void 0;
     this._timeoutSettings = void 0;
     this._delegate = void 0;
-    this._state = void 0;
+    this._emulatedSize = void 0;
+    this._extraHTTPHeaders = void 0;
+    this._emulatedMedia = {};
+    this._interceptFileChooser = false;
     this._pageBindings = new Map();
     this.initScripts = [];
     this._screenshotter = void 0;
@@ -97,17 +100,6 @@ class Page extends _instrumentation.SdkObject {
     this.attribution.page = this;
     this._delegate = delegate;
     this._browserContext = browserContext;
-    this._state = {
-      emulatedSize: browserContext._options.viewport ? {
-        viewport: browserContext._options.viewport,
-        screen: browserContext._options.screen || browserContext._options.viewport
-      } : null,
-      mediaType: null,
-      colorScheme: browserContext._options.colorScheme !== undefined ? browserContext._options.colorScheme : 'light',
-      reducedMotion: browserContext._options.reducedMotion !== undefined ? browserContext._options.reducedMotion : 'no-preference',
-      forcedColors: browserContext._options.forcedColors !== undefined ? browserContext._options.forcedColors : 'none',
-      extraHTTPHeaders: null
-    };
     this.accessibility = new accessibility.Accessibility(delegate.getAccessibilityTree.bind(delegate));
     this.keyboard = new input.Keyboard(delegate.rawKeyboard, this);
     this.mouse = new input.Mouse(delegate.rawMouse, this);
@@ -127,7 +119,7 @@ class Page extends _instrumentation.SdkObject {
     if (openerPage instanceof Page && !openerPage.isClosed()) this._opener = openerPage;
   }
 
-  reportAsNew(error) {
+  reportAsNew(error = undefined, contextEvent = _browserContext.BrowserContext.Events.Page) {
     if (error) {
       // Initialization error could have happened because of
       // context/browser closure. Just ignore the page.
@@ -137,7 +129,7 @@ class Page extends _instrumentation.SdkObject {
     }
 
     this._initialized = true;
-    this.emitOnContext(_browserContext.BrowserContext.Events.Page, this); // I may happen that page initialization finishes after Close event has already been sent,
+    this.emitOnContext(contextEvent, this); // I may happen that page initialization finishes after Close event has already been sent,
     // in that case we fire another Close event to ensure that each reported Page will have
     // corresponding Close event after it is reported on the context.
 
@@ -152,6 +144,23 @@ class Page extends _instrumentation.SdkObject {
     if (this._isServerSideOnly) return;
 
     this._browserContext.emit(event, ...args);
+  }
+
+  async resetForReuse(metadata) {
+    this.setDefaultNavigationTimeout(undefined);
+    this.setDefaultTimeout(undefined);
+    await this._removeExposedBindings();
+    await this._removeInitScripts();
+    await this.setClientRequestInterceptor(undefined);
+    await this._setServerRequestInterceptor(undefined);
+    await this.setFileChooserIntercepted(false); // Re-navigate once init scripts are gone.
+
+    await this.mainFrame().goto(metadata, 'about:blank');
+    this._emulatedSize = undefined;
+    this._emulatedMedia = {};
+    this._extraHTTPHeaders = undefined;
+    this._interceptFileChooser = false;
+    await Promise.all([this._delegate.updateEmulatedViewportSize(true), this._delegate.updateEmulateMedia(), this._delegate.updateFileChooserInterception()]);
   }
 
   async _doSlowMo() {
@@ -252,7 +261,7 @@ class Page extends _instrumentation.SdkObject {
     await this._delegate.exposeBinding(binding);
   }
 
-  async removeExposedBindings() {
+  async _removeExposedBindings() {
     for (const key of this._pageBindings.keys()) {
       if (!key.startsWith('__pw')) this._pageBindings.delete(key);
     }
@@ -261,8 +270,12 @@ class Page extends _instrumentation.SdkObject {
   }
 
   setExtraHTTPHeaders(headers) {
-    this._state.extraHTTPHeaders = headers;
+    this._extraHTTPHeaders = headers;
     return this._delegate.updateExtraHTTPHeaders();
+  }
+
+  extraHTTPHeaders() {
+    return this._extraHTTPHeaders;
   }
 
   async _onBindingCalled(payload, context) {
@@ -280,10 +293,13 @@ class Page extends _instrumentation.SdkObject {
 
   async reload(metadata, options) {
     const controller = new _progress.ProgressController(metadata, this);
-    return controller.run(progress => this.mainFrame().raceNavigationAction(async () => {
+    return controller.run(progress => this.mainFrame().raceNavigationAction(progress, options, async () => {
       // Note: waitForNavigation may fail before we get response to reload(),
       // so we should await it immediately.
-      const [response] = await Promise.all([this.mainFrame()._waitForNavigation(progress, options), this._delegate.reload()]);
+      const [response] = await Promise.all([// Reload must be a new document, and should not be confused with a stray pushState.
+      this.mainFrame()._waitForNavigation(progress, true
+      /* requiresNewDocument */
+      , options), this._delegate.reload()]);
       await this._doSlowMo();
       return response;
     }), this._timeoutSettings.navigationTimeout(options));
@@ -291,12 +307,14 @@ class Page extends _instrumentation.SdkObject {
 
   async goBack(metadata, options) {
     const controller = new _progress.ProgressController(metadata, this);
-    return controller.run(progress => this.mainFrame().raceNavigationAction(async () => {
+    return controller.run(progress => this.mainFrame().raceNavigationAction(progress, options, async () => {
       // Note: waitForNavigation may fail before we get response to goBack,
       // so we should catch it immediately.
       let error;
 
-      const waitPromise = this.mainFrame()._waitForNavigation(progress, options).catch(e => {
+      const waitPromise = this.mainFrame()._waitForNavigation(progress, false
+      /* requiresNewDocument */
+      , options).catch(e => {
         error = e;
         return null;
       });
@@ -312,12 +330,14 @@ class Page extends _instrumentation.SdkObject {
 
   async goForward(metadata, options) {
     const controller = new _progress.ProgressController(metadata, this);
-    return controller.run(progress => this.mainFrame().raceNavigationAction(async () => {
+    return controller.run(progress => this.mainFrame().raceNavigationAction(progress, options, async () => {
       // Note: waitForNavigation may fail before we get response to goForward,
       // so we should catch it immediately.
       let error;
 
-      const waitPromise = this.mainFrame()._waitForNavigation(progress, options).catch(e => {
+      const waitPromise = this.mainFrame()._waitForNavigation(progress, false
+      /* requiresNewDocument */
+      , options).catch(e => {
         error = e;
         return null;
       });
@@ -332,29 +352,50 @@ class Page extends _instrumentation.SdkObject {
   }
 
   async emulateMedia(options) {
-    if (options.media !== undefined) this._state.mediaType = options.media;
-    if (options.colorScheme !== undefined) this._state.colorScheme = options.colorScheme;
-    if (options.reducedMotion !== undefined) this._state.reducedMotion = options.reducedMotion;
-    if (options.forcedColors !== undefined) this._state.forcedColors = options.forcedColors;
+    if (options.media !== undefined) this._emulatedMedia.media = options.media;
+    if (options.colorScheme !== undefined) this._emulatedMedia.colorScheme = options.colorScheme;
+    if (options.reducedMotion !== undefined) this._emulatedMedia.reducedMotion = options.reducedMotion;
+    if (options.forcedColors !== undefined) this._emulatedMedia.forcedColors = options.forcedColors;
     await this._delegate.updateEmulateMedia();
     await this._doSlowMo();
   }
 
+  emulatedMedia() {
+    var _contextOptions$color, _contextOptions$reduc, _contextOptions$force;
+
+    const contextOptions = this._browserContext._options;
+    return {
+      media: this._emulatedMedia.media || null,
+      colorScheme: this._emulatedMedia.colorScheme !== undefined ? this._emulatedMedia.colorScheme : (_contextOptions$color = contextOptions.colorScheme) !== null && _contextOptions$color !== void 0 ? _contextOptions$color : 'light',
+      reducedMotion: this._emulatedMedia.reducedMotion !== undefined ? this._emulatedMedia.reducedMotion : (_contextOptions$reduc = contextOptions.reducedMotion) !== null && _contextOptions$reduc !== void 0 ? _contextOptions$reduc : 'no-preference',
+      forcedColors: this._emulatedMedia.forcedColors !== undefined ? this._emulatedMedia.forcedColors : (_contextOptions$force = contextOptions.forcedColors) !== null && _contextOptions$force !== void 0 ? _contextOptions$force : 'none'
+    };
+  }
+
   async setViewportSize(viewportSize) {
-    this._state.emulatedSize = {
+    this._emulatedSize = {
       viewport: { ...viewportSize
       },
       screen: { ...viewportSize
       }
     };
-    await this._delegate.setEmulatedSize(this._state.emulatedSize);
+    await this._delegate.updateEmulatedViewportSize();
     await this._doSlowMo();
   }
 
   viewportSize() {
-    var _this$_state$emulated;
+    var _this$emulatedSize;
 
-    return ((_this$_state$emulated = this._state.emulatedSize) === null || _this$_state$emulated === void 0 ? void 0 : _this$_state$emulated.viewport) || null;
+    return ((_this$emulatedSize = this.emulatedSize()) === null || _this$emulatedSize === void 0 ? void 0 : _this$emulatedSize.viewport) || null;
+  }
+
+  emulatedSize() {
+    if (this._emulatedSize) return this._emulatedSize;
+    const contextOptions = this._browserContext._options;
+    return contextOptions.viewport ? {
+      viewport: contextOptions.viewport,
+      screen: contextOptions.screen || contextOptions.viewport
+    } : null;
   }
 
   async bringToFront() {
@@ -366,12 +407,12 @@ class Page extends _instrumentation.SdkObject {
     await this._delegate.addInitScript(source);
   }
 
-  async removeInitScripts() {
+  async _removeInitScripts() {
     this.initScripts.splice(0, this.initScripts.length);
     await this._delegate.removeInitScripts();
   }
 
-  _needsRequestInterception() {
+  needsRequestInterception() {
     return !!this._clientRequestInterceptor || !!this._serverRequestInterceptor || !!this._browserContext._requestInterceptor;
   }
 
@@ -383,30 +424,6 @@ class Page extends _instrumentation.SdkObject {
   async _setServerRequestInterceptor(handler) {
     this._serverRequestInterceptor = handler;
     await this._delegate.updateRequestInterception();
-  }
-
-  _requestStarted(request, routeDelegate) {
-    const route = new network.Route(request, routeDelegate);
-
-    if (this._serverRequestInterceptor) {
-      this._serverRequestInterceptor(route, request);
-
-      return;
-    }
-
-    if (this._clientRequestInterceptor) {
-      this._clientRequestInterceptor(route, request);
-
-      return;
-    }
-
-    if (this._browserContext._requestInterceptor) {
-      this._browserContext._requestInterceptor(route, request);
-
-      return;
-    }
-
-    route.continue();
   }
 
   async expectScreenshot(metadata, options = {}) {
@@ -559,7 +576,12 @@ class Page extends _instrumentation.SdkObject {
   }
 
   async setFileChooserIntercepted(enabled) {
-    await this._delegate.setFileChooserIntercepted(enabled);
+    this._interceptFileChooser = enabled;
+    await this._delegate.updateFileChooserInterception();
+  }
+
+  fileChooserIntercepted() {
+    return this._interceptFileChooser;
   }
 
   frameNavigatedToNewDocument(frame) {
@@ -620,14 +642,12 @@ Page.Events = {
   Dialog: 'dialog',
   Download: 'download',
   FileChooser: 'filechooser',
-  DOMContentLoaded: 'domcontentloaded',
   // Can't use just 'error' due to node.js special treatment of error events.
   // @see https://nodejs.org/api/events.html#events_error_events
   PageError: 'pageerror',
   FrameAttached: 'frameattached',
   FrameDetached: 'framedetached',
   InternalFrameNavigatedToNewDocument: 'internalframenavigatedtonewdocument',
-  Load: 'load',
   ScreencastFrame: 'screencastframe',
   Video: 'video',
   WebSocket: 'websocket',

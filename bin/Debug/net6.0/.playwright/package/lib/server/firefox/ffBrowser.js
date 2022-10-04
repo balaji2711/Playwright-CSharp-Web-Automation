@@ -150,7 +150,10 @@ class FFBrowser extends _browser.Browser {
     const ffPage = this._ffPages.get(payload.pageTargetId);
 
     (0, _utils.assert)(ffPage);
-    if (!ffPage) return;
+    if (!ffPage) return; // Abort the navigation that turned into download.
+
+    ffPage._page._frameManager.frameAbortedNavigation(payload.frameId, 'Download is starting');
+
     let originPage = ffPage._initializedPage; // If it's a new window download, report it on the opener page.
 
     if (!originPage) {
@@ -249,7 +252,6 @@ class FFBrowserContext extends _browserContext.BrowserContext {
       browserContextId,
       timezoneId: this._options.timezoneId
     }));
-    if (this._options.permissions) promises.push(this.grantPermissions(this._options.permissions));
     if (this._options.extraHTTPHeaders || this._options.locale) promises.push(this.setExtraHTTPHeaders(this._options.extraHTTPHeaders || []));
     if (this._options.httpCredentials) promises.push(this.setHTTPCredentials(this._options.httpCredentials));
     if (this._options.geolocation) promises.push(this.setGeolocation(this._options.geolocation));
@@ -377,6 +379,13 @@ class FFBrowserContext extends _browserContext.BrowserContext {
     await this._browser._connection.send('Browser.setExtraHTTPHeaders', {
       browserContextId: this._browserContextId,
       headers: allHeaders
+    });
+  }
+
+  async setUserAgent(userAgent) {
+    await this._browser._connection.send('Browser.setUserAgentOverride', {
+      browserContextId: this._browserContextId,
+      userAgent: userAgent || null
     });
   }
 

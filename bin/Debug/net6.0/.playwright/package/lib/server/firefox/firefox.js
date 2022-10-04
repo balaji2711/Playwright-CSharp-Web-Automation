@@ -59,14 +59,6 @@ class Firefox extends _browserType.BrowserType {
 
   _amendEnvironment(env, userDataDir, executable, browserArguments) {
     if (!_path.default.isAbsolute(os.homedir())) throw new Error(`Cannot launch Firefox with relative home directory. Did you set ${os.platform() === 'win32' ? 'USERPROFILE' : 'HOME'} to a relative path?`);
-
-    if (os.platform() === 'linux') {
-      return { ...env,
-        // On linux Juggler ships the libstdc++ it was linked against.
-        LD_LIBRARY_PATH: `${_path.default.dirname(executable)}:${process.env.LD_LIBRARY_PATH}`
-      };
-    }
-
     return env;
   }
 
@@ -87,7 +79,9 @@ class Firefox extends _browserType.BrowserType {
     const userDataDirArg = args.find(arg => arg.startsWith('-profile') || arg.startsWith('--profile'));
     if (userDataDirArg) throw new Error('Pass userDataDir parameter to `browserType.launchPersistentContext(userDataDir, ...)` instead of specifying --profile argument');
     if (args.find(arg => arg.startsWith('-juggler'))) throw new Error('Use the port parameter instead of -juggler argument');
-    const firefoxUserPrefs = isPersistent ? undefined : options.firefoxUserPrefs;
+    const firefoxUserPrefs = isPersistent ? undefined : { ...kBandaidFirefoxUserPrefs,
+      ...options.firefoxUserPrefs
+    };
 
     if (firefoxUserPrefs) {
       const lines = [];
@@ -113,6 +107,11 @@ class Firefox extends _browserType.BrowserType {
     return firefoxArguments;
   }
 
-}
+} // Prefs for quick fixes that didn't make it to the build.
+// Should all be moved to `playwright.cfg`.
+
 
 exports.Firefox = Firefox;
+const kBandaidFirefoxUserPrefs = {
+  'network.cookie.cookieBehavior': 4
+};

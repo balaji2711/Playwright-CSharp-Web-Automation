@@ -5,8 +5,6 @@ Object.defineProperty(exports, "__esModule", {
 });
 exports.TracingDispatcher = void 0;
 
-var _tracing = require("../trace/recorder/tracing");
-
 var _artifactDispatcher = require("./artifactDispatcher");
 
 var _dispatcher = require("./dispatcher");
@@ -33,9 +31,8 @@ class TracingDispatcher extends _dispatcher.Dispatcher {
   }
 
   constructor(scope, tracing) {
-    super(scope, tracing, 'Tracing', {}, true);
+    super(scope, tracing, 'Tracing', {});
     this._type_Tracing = true;
-    tracing.on(_tracing.Tracing.Events.Dispose, () => this._dispose());
   }
 
   async tracingStart(params) {
@@ -52,7 +49,7 @@ class TracingDispatcher extends _dispatcher.Dispatcher {
       sourceEntries
     } = await this._object.stopChunk(params);
     return {
-      artifact: artifact ? new _artifactDispatcher.ArtifactDispatcher(this._scope, artifact) : undefined,
+      artifact: artifact ? new _artifactDispatcher.ArtifactDispatcher(this, artifact) : undefined,
       sourceEntries
     };
   }

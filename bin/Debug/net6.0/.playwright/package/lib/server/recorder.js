@@ -60,26 +60,26 @@ function _interopRequireWildcard(obj, nodeInterop) { if (!nodeInterop && obj && 
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-const symbol = Symbol('RecorderSupplement');
+const recorderSymbol = Symbol('recorderSymbol');
 
 class Recorder {
   static showInspector(context) {
     Recorder.show(context, {}).catch(() => {});
   }
 
-  static show(context, params = {}) {
-    let recorderPromise = context[symbol];
+  static show(context, params = {}, recorderAppFactory = Recorder.defaultRecorderAppFactory) {
+    let recorderPromise = context[recorderSymbol];
 
     if (!recorderPromise) {
-      const recorder = new Recorder(context, params);
+      const recorder = new Recorder(context, params, recorderAppFactory);
       recorderPromise = recorder.install().then(() => recorder);
-      context[symbol] = recorderPromise;
+      context[recorderSymbol] = recorderPromise;
     }
 
     return recorderPromise;
   }
 
-  constructor(context, params) {
+  constructor(context, params, recorderAppFactory) {
     this._context = void 0;
     this._mode = void 0;
     this._highlightedSelector = '';
@@ -87,18 +87,28 @@ class Recorder {
     this._currentCallsMetadata = new Map();
     this._recorderSources = [];
     this._userSources = new Map();
-    this._allMetadatas = new Map();
     this._debugger = void 0;
     this._contextRecorder = void 0;
-    this._mode = params.startRecording ? 'recording' : 'none';
+    this._handleSIGINT = void 0;
+    this._recorderAppFactory = void 0;
+    this._omitCallTracking = false;
+    this._mode = params.mode || 'none';
+    this._recorderAppFactory = recorderAppFactory;
     this._contextRecorder = new ContextRecorder(context, params);
     this._context = context;
+    this._omitCallTracking = !!params.omitCallTracking;
     this._debugger = _debugger.Debugger.lookup(context);
+    this._handleSIGINT = params.handleSIGINT;
     context.instrumentation.addListener(this, context);
   }
 
+  static async defaultRecorderAppFactory(recorder) {
+    if (process.env.PW_CODEGEN_NO_INSPECTOR) return new _recorderApp.EmptyRecorderApp();
+    return await _recorderApp.RecorderApp.open(recorder, recorder._context, recorder._handleSIGINT);
+  }
+
   async install() {
-    const recorderApp = await _recorderApp.RecorderApp.open(this._context._browser.options.sdkLanguage, !!this._context._browser.options.headful);
+    const recorderApp = await this._recorderAppFactory(this);
     this._recorderApp = recorderApp;
     recorderApp.once('close', () => {
       this._debugger.resume(false);
@@ -107,18 +117,12 @@ class Recorder {
     });
     recorderApp.on('event', data => {
       if (data.event === 'setMode') {
-        this._setMode(data.params.mode);
-
-        this._refreshOverlay();
-
+        this.setMode(data.params.mode);
         return;
       }
 
       if (data.event === 'selectorUpdated') {
-        this._highlightedSelector = data.params.selector;
-
-        this._refreshOverlay();
-
+        this.setHighlightedSelector(data.params.selector);
         return;
       }
 
@@ -185,12 +189,9 @@ class Recorder {
       return uiState;
     });
     await this._context.exposeBinding('__pw_recorderSetSelector', false, async (_, selector) => {
-      var _this$_recorderApp2, _this$_recorderApp3;
-
-      this._setMode('none');
+      var _this$_recorderApp2;
 
       await ((_this$_recorderApp2 = this._recorderApp) === null || _this$_recorderApp2 === void 0 ? void 0 : _this$_recorderApp2.setSelector(selector, true));
-      await ((_this$_recorderApp3 = this._recorderApp) === null || _this$_recorderApp3 === void 0 ? void 0 : _this$_recorderApp3.bringToFront());
     });
     await this._context.exposeBinding('__pw_resume', false, () => {
       this._debugger.resume(false);
@@ -205,7 +206,7 @@ class Recorder {
   }
 
   _pausedStateChanged() {
-    var _this$_recorderApp4;
+    var _this$_recorderApp3;
 
     // If we are called upon page.pause, we don't have metadatas, populate them.
     for (const {
@@ -215,24 +216,38 @@ class Recorder {
       if (!this._currentCallsMetadata.has(metadata)) this.onBeforeCall(sdkObject, metadata);
     }
 
-    (_this$_recorderApp4 = this._recorderApp) === null || _this$_recorderApp4 === void 0 ? void 0 : _this$_recorderApp4.setPaused(this._debugger.isPaused());
+    (_this$_recorderApp3 = this._recorderApp) === null || _this$_recorderApp3 === void 0 ? void 0 : _this$_recorderApp3.setPaused(this._debugger.isPaused());
 
     this._updateUserSources();
 
     this.updateCallLog([...this._currentCallsMetadata.keys()]);
   }
 
-  _setMode(mode) {
-    var _this$_recorderApp5;
+  setMode(mode) {
+    var _this$_recorderApp4;
 
+    if (this._mode === mode) return;
+    this._highlightedSelector = '';
     this._mode = mode;
-    (_this$_recorderApp5 = this._recorderApp) === null || _this$_recorderApp5 === void 0 ? void 0 : _this$_recorderApp5.setMode(this._mode);
+    (_this$_recorderApp4 = this._recorderApp) === null || _this$_recorderApp4 === void 0 ? void 0 : _this$_recorderApp4.setMode(this._mode);
 
     this._contextRecorder.setEnabled(this._mode === 'recording');
 
     this._debugger.setMuted(this._mode === 'recording');
 
-    if (this._mode !== 'none') this._context.pages()[0].bringToFront().catch(() => {});
+    if (this._mode !== 'none' && this._context.pages().length === 1) this._context.pages()[0].bringToFront().catch(() => {});
+
+    this._refreshOverlay();
+  }
+
+  setHighlightedSelector(selector) {
+    this._highlightedSelector = selector;
+
+    this._refreshOverlay();
+  }
+
+  setOutput(language, outputFile) {
+    this._contextRecorder.setOutput(language, outputFile);
   }
 
   _refreshOverlay() {
@@ -240,26 +255,24 @@ class Recorder {
   }
 
   async onBeforeCall(sdkObject, metadata) {
-    if (this._mode === 'recording') return;
+    if (this._omitCallTracking || this._mode === 'recording') return;
 
     this._currentCallsMetadata.set(metadata, sdkObject);
-
-    this._allMetadatas.set(metadata.id, metadata);
 
     this._updateUserSources();
 
     this.updateCallLog([metadata]);
 
     if (metadata.params && metadata.params.selector) {
-      var _this$_recorderApp6;
+      var _this$_recorderApp5;
 
       this._highlightedSelector = metadata.params.selector;
-      (_this$_recorderApp6 = this._recorderApp) === null || _this$_recorderApp6 === void 0 ? void 0 : _this$_recorderApp6.setSelector(this._highlightedSelector).catch(() => {});
+      (_this$_recorderApp5 = this._recorderApp) === null || _this$_recorderApp5 === void 0 ? void 0 : _this$_recorderApp5.setSelector(this._highlightedSelector).catch(() => {});
     }
   }
 
   async onAfterCall(sdkObject, metadata) {
-    if (this._mode === 'recording') return;
+    if (this._omitCallTracking || this._mode === 'recording') return;
     if (!metadata.error) this._currentCallsMetadata.delete(metadata);
 
     this._updateUserSources();
@@ -268,7 +281,7 @@ class Recorder {
   }
 
   _updateUserSources() {
-    var _this$_recorderApp7;
+    var _this$_recorderApp6;
 
     // Remove old decorations.
     for (const source of this._userSources.values()) {
@@ -291,7 +304,8 @@ class Recorder {
       if (!source) {
         source = {
           isRecorded: false,
-          file,
+          label: file,
+          id: file,
           text: this._readSource(file),
           highlight: [],
           language: languageForFile(file)
@@ -308,19 +322,19 @@ class Recorder {
           type: metadata.error ? 'error' : paused ? 'paused' : 'running'
         });
         source.revealLine = line;
-        fileToSelect = source.file;
+        fileToSelect = source.id;
       }
     }
 
     this._pushAllSources();
 
-    if (fileToSelect) (_this$_recorderApp7 = this._recorderApp) === null || _this$_recorderApp7 === void 0 ? void 0 : _this$_recorderApp7.setFileIfNeeded(fileToSelect);
+    if (fileToSelect) (_this$_recorderApp6 = this._recorderApp) === null || _this$_recorderApp6 === void 0 ? void 0 : _this$_recorderApp6.setFileIfNeeded(fileToSelect);
   }
 
   _pushAllSources() {
-    var _this$_recorderApp8;
+    var _this$_recorderApp7;
 
-    (_this$_recorderApp8 = this._recorderApp) === null || _this$_recorderApp8 === void 0 ? void 0 : _this$_recorderApp8.setSources([...this._recorderSources, ...this._userSources.values()]);
+    (_this$_recorderApp7 = this._recorderApp) === null || _this$_recorderApp7 === void 0 ? void 0 : _this$_recorderApp7.setSources([...this._recorderSources, ...this._userSources.values()]);
   }
 
   async onBeforeInputAction(sdkObject, metadata) {}
@@ -330,7 +344,7 @@ class Recorder {
   }
 
   updateCallLog(metadatas) {
-    var _this$_recorderApp9;
+    var _this$_recorderApp8;
 
     if (this._mode === 'recording') return;
     const logs = [];
@@ -343,7 +357,7 @@ class Recorder {
       logs.push((0, _recorderUtils.metadataToCallLog)(metadata, status));
     }
 
-    (_this$_recorderApp9 = this._recorderApp) === null || _this$_recorderApp9 === void 0 ? void 0 : _this$_recorderApp9.updateCallLogs(logs);
+    (_this$_recorderApp8 = this._recorderApp) === null || _this$_recorderApp8 === void 0 ? void 0 : _this$_recorderApp8.updateCallLogs(logs);
   }
 
   _readSource(fileName) {
@@ -370,24 +384,25 @@ class ContextRecorder extends _events.EventEmitter {
     this._context = void 0;
     this._params = void 0;
     this._recorderSources = void 0;
+    this._throttledOutputFile = null;
+    this._orderedLanguages = [];
     this._context = context;
     this._params = params;
-    const language = params.language || context._browser.options.sdkLanguage;
-    const languages = new Set([new _java.JavaLanguageGenerator(), new _javascript.JavaScriptLanguageGenerator(false), new _javascript.JavaScriptLanguageGenerator(true), new _python.PythonLanguageGenerator(false, false), new _python.PythonLanguageGenerator(true, false), new _python.PythonLanguageGenerator(false, true), new _csharp.CSharpLanguageGenerator()]);
-    const primaryLanguage = [...languages].find(l => l.id === language);
-    if (!primaryLanguage) throw new Error(`\n===============================\nUnsupported language: '${language}'\n===============================\n`);
-    languages.delete(primaryLanguage);
-    const orderedLanguages = [primaryLanguage, ...languages];
     this._recorderSources = [];
-    const generator = new _codeGenerator.CodeGenerator(context._browser.options.name, !!params.startRecording, params.launchOptions || {}, params.contextOptions || {}, params.device, params.saveStorage);
-    const throttledOutputFile = params.outputFile ? new ThrottledFile(params.outputFile) : null;
+    const language = params.language || context._browser.options.sdkLanguage;
+    this.setOutput(language, params.outputFile);
+    const generator = new _codeGenerator.CodeGenerator(context._browser.options.name, params.mode === 'recording', params.launchOptions || {}, params.contextOptions || {}, params.device, params.saveStorage);
     generator.on('change', () => {
       this._recorderSources = [];
 
-      for (const languageGenerator of orderedLanguages) {
+      for (const languageGenerator of this._orderedLanguages) {
+        var _this$_throttledOutpu;
+
         const source = {
           isRecorded: true,
-          file: languageGenerator.fileName,
+          label: languageGenerator.name,
+          group: languageGenerator.groupName,
+          id: languageGenerator.id,
           text: generator.generateText(languageGenerator),
           language: languageGenerator.highlighter,
           highlight: []
@@ -396,25 +411,53 @@ class ContextRecorder extends _events.EventEmitter {
 
         this._recorderSources.push(source);
 
-        if (languageGenerator === orderedLanguages[0]) throttledOutputFile === null || throttledOutputFile === void 0 ? void 0 : throttledOutputFile.setContent(source.text);
+        if (languageGenerator === this._orderedLanguages[0]) (_this$_throttledOutpu = this._throttledOutputFile) === null || _this$_throttledOutpu === void 0 ? void 0 : _this$_throttledOutpu.setContent(source.text);
       }
 
       this.emit(ContextRecorder.Events.Change, {
         sources: this._recorderSources,
-        primaryFileName: primaryLanguage.fileName
+        primaryFileName: this._orderedLanguages[0].id
       });
     });
+    context.on(_browserContext.BrowserContext.Events.BeforeClose, () => {
+      var _this$_throttledOutpu2;
 
-    if (throttledOutputFile) {
-      context.on(_browserContext.BrowserContext.Events.BeforeClose, () => {
-        throttledOutputFile.flush();
-      });
-      process.on('exit', () => {
-        throttledOutputFile.flush();
-      });
-    }
+      (_this$_throttledOutpu2 = this._throttledOutputFile) === null || _this$_throttledOutpu2 === void 0 ? void 0 : _this$_throttledOutpu2.flush();
+    });
+    process.on('exit', () => {
+      var _this$_throttledOutpu3;
 
+      (_this$_throttledOutpu3 = this._throttledOutputFile) === null || _this$_throttledOutpu3 === void 0 ? void 0 : _this$_throttledOutpu3.flush();
+    });
     this._generator = generator;
+  }
+
+  setOutput(language, outputFile) {
+    var _this$_generator;
+
+    const languages = new Set([new _java.JavaLanguageGenerator(), new _javascript.JavaScriptLanguageGenerator(
+    /* isPlaywrightTest */
+    false), new _javascript.JavaScriptLanguageGenerator(
+    /* isPlaywrightTest */
+    true), new _python.PythonLanguageGenerator(
+    /* isAsync */
+    false,
+    /* isPytest */
+    true), new _python.PythonLanguageGenerator(
+    /* isAsync */
+    false,
+    /* isPytest */
+    false), new _python.PythonLanguageGenerator(
+    /* isAsync */
+    true,
+    /* isPytest */
+    false), new _csharp.CSharpLanguageGenerator('mstest'), new _csharp.CSharpLanguageGenerator('nunit'), new _csharp.CSharpLanguageGenerator('library')]);
+    const primaryLanguage = [...languages].find(l => l.id === language);
+    if (!primaryLanguage) throw new Error(`\n===============================\nUnsupported language: '${language}'\n===============================\n`);
+    languages.delete(primaryLanguage);
+    this._orderedLanguages = [primaryLanguage, ...languages];
+    this._throttledOutputFile = outputFile ? new ThrottledFile(outputFile) : null;
+    (_this$_generator = this._generator) === null || _this$_generator === void 0 ? void 0 : _this$_generator.restart();
   }
 
   async install() {
@@ -455,7 +498,9 @@ class ContextRecorder extends _events.EventEmitter {
 
       this._pageAliases.delete(page);
     });
-    frame.on(_frames.Frame.Events.Navigation, () => this._onFrameNavigated(frame, page));
+    frame.on(_frames.Frame.Events.InternalNavigation, event => {
+      if (event.isPublic) this._onFrameNavigated(frame, page);
+    });
     page.on(_page.Page.Events.Download, () => this._onDownload(page));
     page.on(_page.Page.Events.Dialog, () => this._onDialog(page));
     const suffix = this._pageAliases.size ? String(++this._lastPopupOrdinal) : '';
@@ -481,7 +526,7 @@ class ContextRecorder extends _events.EventEmitter {
   clearScript() {
     this._generator.restart();
 
-    if (!!this._params.startRecording) {
+    if (this._params.mode === 'recording') {
       for (const page of this._context.pages()) this._onFrameNavigated(page.mainFrame(), page);
     }
   }
@@ -721,7 +766,7 @@ class ThrottledFile {
 
   setContent(text) {
     this._text = text;
-    if (!this._timer) this._timer = setTimeout(() => this.flush(), 1000);
+    if (!this._timer) this._timer = setTimeout(() => this.flush(), 250);
   }
 
   flush() {

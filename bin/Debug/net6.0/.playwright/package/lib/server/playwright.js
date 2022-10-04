@@ -55,7 +55,10 @@ class Playwright extends _instrumentation.SdkObject {
     this.webkit = void 0;
     this.options = void 0;
     this._allPages = new Set();
+    this._allBrowsers = new Set();
     this.instrumentation.addListener({
+      onBrowserOpen: browser => this._allBrowsers.add(browser),
+      onBrowserClose: browser => this._allBrowsers.delete(browser),
       onPageOpen: page => this._allPages.add(page),
       onPageClose: page => this._allPages.delete(page),
       onCallLog: (sdkObject, metadata, logName, message) => {
@@ -77,6 +80,14 @@ class Playwright extends _instrumentation.SdkObject {
 
   async hideHighlight() {
     await Promise.all([...this._allPages].map(p => p.hideHighlight().catch(() => {})));
+  }
+
+  allBrowsers() {
+    return [...this._allBrowsers];
+  }
+
+  allPages() {
+    return [...this._allPages];
   }
 
 }

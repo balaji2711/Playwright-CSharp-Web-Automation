@@ -63,8 +63,6 @@ class FFConnection extends _events.EventEmitter {
     this._browserLogsCollector = browserLogsCollector;
     this._lastId = 0;
     this._callbacks = new Map();
-    this._transport.onmessage = this._onMessage.bind(this);
-    this._transport.onclose = this._onClose.bind(this);
     this._sessions = new Map();
     this._closed = false;
     this.on = super.on;
@@ -72,6 +70,9 @@ class FFConnection extends _events.EventEmitter {
     this.off = super.removeListener;
     this.removeListener = super.removeListener;
     this.once = super.once;
+    this._transport.onmessage = this._onMessage.bind(this); // onclose should be set last, since it can be immediately called.
+
+    this._transport.onclose = this._onClose.bind(this);
   }
 
   async send(method, params) {

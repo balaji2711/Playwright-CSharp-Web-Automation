@@ -34,15 +34,16 @@ function _interopRequireDefault(obj) { return obj && obj.__esModule ? obj : { de
  */
 class PythonLanguageGenerator {
   constructor(isAsync, isPyTest) {
-    this.id = 'python';
-    this.fileName = 'Python';
+    this.id = void 0;
+    this.groupName = 'Python';
+    this.name = void 0;
     this.highlighter = 'python';
     this._awaitPrefix = void 0;
     this._asyncPrefix = void 0;
     this._isAsync = void 0;
     this._isPyTest = void 0;
     this.id = isPyTest ? 'pytest' : isAsync ? 'python-async' : 'python';
-    this.fileName = isPyTest ? 'Pytest' : isAsync ? 'Python Async' : 'Python';
+    this.name = isPyTest ? 'Pytest' : isAsync ? 'Library Async' : 'Library';
     this._isAsync = isAsync;
     this._isPyTest = isPyTest;
     this._awaitPrefix = isAsync ? 'await ' : '';
@@ -101,16 +102,12 @@ class PythonLanguageGenerator {
       download = ${this._awaitPrefix}download_info.value`;
     }
 
-    if (signals.waitForNavigation) {
-      code = `
-      # ${this._asyncPrefix}with ${pageAlias}.expect_navigation(url=${quote(signals.waitForNavigation.url)}):
-      ${this._asyncPrefix}with ${pageAlias}.expect_navigation() {
-        ${code}
-      }`;
+    formatter.add(code);
+
+    if (signals.assertNavigation) {
+      if (this._isPyTest) formatter.add(`${this._awaitPrefix}expect(${pageAlias}).to_have_url(${quote(signals.assertNavigation.url)})`);else formatter.add(`${this._awaitPrefix}${pageAlias}.wait_for_url(${quote(signals.assertNavigation.url)})`);
     }
 
-    formatter.add(code);
-    if (signals.assertNavigation) formatter.add(`  # ${this._awaitPrefix}expect(${pageAlias}).to_have_url(${quote(signals.assertNavigation.url)})`);
     return formatter.format();
   }
 
@@ -255,7 +252,7 @@ function toSnakeCase(name) {
 }
 
 function formatOptions(value, hasArguments, asDict) {
-  const keys = Object.keys(value);
+  const keys = Object.keys(value).filter(key => value[key] !== undefined).sort();
   if (!keys.length) return '';
   return (hasArguments ? ', ' : '') + keys.map(key => {
     if (asDict) return `"${toSnakeCase(key)}": ${formatValue(value[key])}`;
@@ -263,10 +260,26 @@ function formatOptions(value, hasArguments, asDict) {
   }).join(', ');
 }
 
+function convertContextOptions(options) {
+  const result = { ...options
+  };
+
+  if (options.recordHar) {
+    result['record_har_path'] = options.recordHar.path;
+    result['record_har_content'] = options.recordHar.content;
+    result['record_har_mode'] = options.recordHar.mode;
+    result['record_har_omit_content'] = options.recordHar.omitContent;
+    result['record_har_url_filter'] = options.recordHar.urlFilter;
+    delete result.recordHar;
+  }
+
+  return result;
+}
+
 function formatContextOptions(options, deviceName, asDict) {
   const device = deviceName && _deviceDescriptors.default[deviceName];
-  if (!device) return formatOptions(options, false, asDict);
-  return `**playwright.devices[${quote(deviceName)}]` + formatOptions((0, _language.sanitizeDeviceOptions)(device, options), true, asDict);
+  if (!device) return formatOptions(convertContextOptions(options), false, asDict);
+  return `**playwright.devices[${quote(deviceName)}]` + formatOptions(convertContextOptions((0, _language.sanitizeDeviceOptions)(device, options)), true, asDict);
 }
 
 class PythonFormatter {

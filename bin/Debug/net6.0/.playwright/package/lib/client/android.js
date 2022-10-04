@@ -234,9 +234,8 @@ class AndroidDevice extends _channelOwner.ChannelOwner {
     const {
       binary
     } = await this._channel.screenshot();
-    const buffer = Buffer.from(binary, 'base64');
-    if (options.path) await _fs.default.promises.writeFile(options.path, buffer);
-    return buffer;
+    if (options.path) await _fs.default.promises.writeFile(options.path, binary);
+    return binary;
   }
 
   async close() {
@@ -250,7 +249,7 @@ class AndroidDevice extends _channelOwner.ChannelOwner {
     } = await this._channel.shell({
       command
     });
-    return Buffer.from(result, 'base64');
+    return result;
   }
 
   async open(command) {
@@ -312,14 +311,14 @@ class AndroidSocket extends _channelOwner.ChannelOwner {
 
     this._channel.on('data', ({
       data
-    }) => this.emit(_events.Events.AndroidSocket.Data, Buffer.from(data, 'base64')));
+    }) => this.emit(_events.Events.AndroidSocket.Data, data));
 
     this._channel.on('close', () => this.emit(_events.Events.AndroidSocket.Close));
   }
 
   async write(data) {
     await this._channel.write({
-      data: data.toString('base64')
+      data
     });
   }
 
@@ -332,10 +331,8 @@ class AndroidSocket extends _channelOwner.ChannelOwner {
 exports.AndroidSocket = AndroidSocket;
 
 async function loadFile(file) {
-  if ((0, _utils.isString)(file)) return _fs.default.promises.readFile(file, {
-    encoding: 'base64'
-  }).toString();
-  return file.toString('base64');
+  if ((0, _utils.isString)(file)) return _fs.default.promises.readFile(file);
+  return file;
 }
 
 class AndroidInput {

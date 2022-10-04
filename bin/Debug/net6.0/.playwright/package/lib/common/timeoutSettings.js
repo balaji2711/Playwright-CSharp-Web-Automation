@@ -3,7 +3,7 @@
 Object.defineProperty(exports, "__esModule", {
   value: true
 });
-exports.TimeoutSettings = exports.DEFAULT_TIMEOUT = void 0;
+exports.TimeoutSettings = exports.DEFAULT_TIMEOUT = exports.DEFAULT_LAUNCH_TIMEOUT = void 0;
 
 var _utils = require("../utils");
 
@@ -25,6 +25,9 @@ var _utils = require("../utils");
  */
 const DEFAULT_TIMEOUT = 30000;
 exports.DEFAULT_TIMEOUT = DEFAULT_TIMEOUT;
+const DEFAULT_LAUNCH_TIMEOUT = 3 * 60 * 1000; // 3 minutes
+
+exports.DEFAULT_LAUNCH_TIMEOUT = DEFAULT_LAUNCH_TIMEOUT;
 
 class TimeoutSettings {
   constructor(parent) {
@@ -63,6 +66,12 @@ class TimeoutSettings {
     if (typeof options.timeout === 'number') return options.timeout;
     if ((0, _utils.debugMode)()) return 0;
     return DEFAULT_TIMEOUT;
+  }
+
+  static launchTimeout(options) {
+    if (typeof options.timeout === 'number') return options.timeout;
+    if ((0, _utils.debugMode)()) return 0;
+    return DEFAULT_LAUNCH_TIMEOUT;
   }
 
 }

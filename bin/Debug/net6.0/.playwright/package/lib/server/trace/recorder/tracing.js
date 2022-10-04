@@ -65,7 +65,7 @@ const kScreencastOptions = {
 
 class Tracing extends _instrumentation.SdkObject {
   constructor(context, tracesDir) {
-    super(context, 'Tracing');
+    super(context, 'tracing');
     this._writeChain = Promise.resolve();
     this._snapshotter = void 0;
     this._harTracer = void 0;
@@ -80,8 +80,10 @@ class Tracing extends _instrumentation.SdkObject {
     this._contextCreatedEvent = void 0;
     this._context = context;
     this._precreatedTracesDir = tracesDir;
-    this._harTracer = new _harTracer.HarTracer(context, this, {
-      content: 'sha1',
+    this._harTracer = new _harTracer.HarTracer(context, null, this, {
+      content: 'attach',
+      includeTraceInfo: true,
+      recordRequestOverrides: false,
       waitForContentOnStop: false,
       skipScripts: true
     });
@@ -204,22 +206,18 @@ class Tracing extends _instrumentation.SdkObject {
     return this._tracesTmpDir;
   }
 
-  async flush() {
+  async dispose() {
     var _this$_snapshotter2;
 
     (_this$_snapshotter2 = this._snapshotter) === null || _this$_snapshotter2 === void 0 ? void 0 : _this$_snapshotter2.dispose();
+
+    this._harTracer.stop();
+
     await this._writeChain;
   }
 
-  async dispose() {
-    var _this$_snapshotter3;
-
-    (_this$_snapshotter3 = this._snapshotter) === null || _this$_snapshotter3 === void 0 ? void 0 : _this$_snapshotter3.dispose();
-    this.emit(Tracing.Events.Dispose);
-  }
-
   async stopChunk(params) {
-    var _this$_state, _this$_snapshotter4;
+    var _this$_state, _this$_snapshotter3;
 
     if (this._isStopping) throw new Error(`Tracing is already stopping`);
     this._isStopping = true;
@@ -264,7 +262,7 @@ class Tracing extends _instrumentation.SdkObject {
       await this.onAfterCall(sdkObject, callMetadata);
     }
 
-    if (state.options.snapshots) await ((_this$_snapshotter4 = this._snapshotter) === null || _this$_snapshotter4 === void 0 ? void 0 : _this$_snapshotter4.stop()); // Chain the export operation against write operations,
+    if (state.options.snapshots) await ((_this$_snapshotter3 = this._snapshotter) === null || _this$_snapshotter3 === void 0 ? void 0 : _this$_snapshotter3.stop()); // Chain the export operation against write operations,
     // so that neither trace files nor sha1s change during the export.
 
     return (await this._appendTraceOperation(async () => {
@@ -531,9 +529,6 @@ class Tracing extends _instrumentation.SdkObject {
 }
 
 exports.Tracing = Tracing;
-Tracing.Events = {
-  Dispose: 'dispose'
-};
 
 function visitSha1s(object, sha1s) {
   if (Array.isArray(object)) {

@@ -21,10 +21,10 @@ Object.defineProperty(exports, "Registry", {
     return _registry.Registry;
   }
 });
-Object.defineProperty(exports, "Root", {
+Object.defineProperty(exports, "RootDispatcher", {
   enumerable: true,
   get: function () {
-    return _dispatcher.Root;
+    return _dispatcher.RootDispatcher;
   }
 });
 Object.defineProperty(exports, "createPlaywright", {

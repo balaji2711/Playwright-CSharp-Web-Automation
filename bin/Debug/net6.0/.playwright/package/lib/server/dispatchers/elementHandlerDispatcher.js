@@ -232,23 +232,23 @@ class ElementHandleDispatcher extends _jsHandleDispatcher.JSHandleDispatcher {
       selector
     }));
     return {
-      binary: (await this._elementHandle.screenshot(metadata, { ...params,
+      binary: await this._elementHandle.screenshot(metadata, { ...params,
         mask
-      })).toString('base64')
+      })
     };
   }
 
   async querySelector(params, metadata) {
     const handle = await this._elementHandle.querySelector(params.selector, params);
     return {
-      element: ElementHandleDispatcher.fromNullable(this._scope, handle)
+      element: ElementHandleDispatcher.fromNullable(this.parentScope(), handle)
     };
   }
 
   async querySelectorAll(params, metadata) {
     const elements = await this._elementHandle.querySelectorAll(params.selector);
     return {
-      elements: elements.map(e => ElementHandleDispatcher.from(this._scope, e))
+      elements: elements.map(e => ElementHandleDispatcher.from(this.parentScope(), e))
     };
   }
 
@@ -270,7 +270,7 @@ class ElementHandleDispatcher extends _jsHandleDispatcher.JSHandleDispatcher {
 
   async waitForSelector(params, metadata) {
     return {
-      element: ElementHandleDispatcher.fromNullable(this._scope, await this._elementHandle.waitForSelector(metadata, params.selector, params))
+      element: ElementHandleDispatcher.fromNullable(this.parentScope(), await this._elementHandle.waitForSelector(metadata, params.selector, params))
     };
   }
 

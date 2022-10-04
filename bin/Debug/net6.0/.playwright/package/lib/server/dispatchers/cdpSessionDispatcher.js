@@ -26,7 +26,7 @@ var _dispatcher = require("./dispatcher");
  */
 class CDPSessionDispatcher extends _dispatcher.Dispatcher {
   constructor(scope, crSession) {
-    super(scope, crSession, 'CDPSession', {}, true);
+    super(scope, crSession, 'CDPSession', {});
     this._type_CDPSession = true;
 
     crSession._eventListener = (method, params) => {
@@ -36,7 +36,7 @@ class CDPSessionDispatcher extends _dispatcher.Dispatcher {
       });
     };
 
-    crSession.on(_crConnection.CRSessionEvents.Disconnected, () => this._dispose());
+    this.addObjectListener(_crConnection.CRSessionEvents.Disconnected, () => this._dispose());
   }
 
   async send(params) {

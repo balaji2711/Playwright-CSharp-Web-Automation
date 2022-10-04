@@ -75,7 +75,7 @@ class ArtifactDispatcher extends _dispatcher.Dispatcher {
         try {
           const readable = _fs.default.createReadStream(localPath);
 
-          const stream = new _streamDispatcher.StreamDispatcher(this._scope, readable); // Resolve with a stream, so that client starts saving the data.
+          const stream = new _streamDispatcher.StreamDispatcher(this, readable); // Resolve with a stream, so that client starts saving the data.
 
           resolve({
             stream
@@ -100,7 +100,7 @@ class ArtifactDispatcher extends _dispatcher.Dispatcher {
     const readable = _fs.default.createReadStream(fileName);
 
     return {
-      stream: new _streamDispatcher.StreamDispatcher(this._scope, readable)
+      stream: new _streamDispatcher.StreamDispatcher(this, readable)
     };
   }
 

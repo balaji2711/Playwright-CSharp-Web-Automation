@@ -23,7 +23,7 @@ var _events = require("events");
  * limitations under the License.
  */
 class CodeGenerator extends _events.EventEmitter {
-  constructor(browserName, generateHeaders, launchOptions, contextOptions, deviceName, saveStorage) {
+  constructor(browserName, enabled, launchOptions, contextOptions, deviceName, saveStorage) {
     super(); // Make a copy of options to modify them later.
 
     this._currentAction = null;
@@ -37,10 +37,9 @@ class CodeGenerator extends _events.EventEmitter {
     };
     contextOptions = { ...contextOptions
     };
-    this._enabled = generateHeaders;
+    this._enabled = enabled;
     this._options = {
       browserName,
-      generateHeaders,
       launchOptions,
       contextOptions,
       deviceName,
@@ -134,7 +133,6 @@ class CodeGenerator extends _events.EventEmitter {
       const signals = this._lastAction.action.signals;
       if (signal.name === 'navigation' && signals.length && signals[signals.length - 1].name === 'download') return;
       if (signal.name === 'download' && signals.length && signals[signals.length - 1].name === 'navigation') signals.length = signals.length - 1;
-      signal.isAsync = true;
 
       this._lastAction.action.signals.push(signal);
 
@@ -161,14 +159,14 @@ class CodeGenerator extends _events.EventEmitter {
 
   generateText(languageGenerator) {
     const text = [];
-    if (this._options.generateHeaders) text.push(languageGenerator.generateHeader(this._options));
+    text.push(languageGenerator.generateHeader(this._options));
 
     for (const action of this._actions) {
       const actionText = languageGenerator.generateAction(action);
       if (actionText) text.push(actionText);
     }
 
-    if (this._options.generateHeaders) text.push(languageGenerator.generateFooter(this._options.saveStorage));
+    text.push(languageGenerator.generateFooter(this._options.saveStorage));
     return text.join('\n');
   }
 

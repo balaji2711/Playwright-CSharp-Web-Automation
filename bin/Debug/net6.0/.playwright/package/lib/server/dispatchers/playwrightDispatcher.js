@@ -62,7 +62,7 @@ class PlaywrightDispatcher extends _dispatcher.Dispatcher {
       selectors: new _selectorsDispatcher.SelectorsDispatcher(scope, (browserDispatcher === null || browserDispatcher === void 0 ? void 0 : browserDispatcher.selectors) || playwright.selectors),
       preLaunchedBrowser: browserDispatcher,
       socksSupport: socksProxy ? new SocksSupportDispatcher(scope, socksProxy) : undefined
-    }, false);
+    });
     this._type_Playwright = void 0;
     this._browserDispatcher = void 0;
     this._type_Playwright = true;
@@ -72,7 +72,7 @@ class PlaywrightDispatcher extends _dispatcher.Dispatcher {
   async newRequest(params, metadata) {
     const request = new _fetch.GlobalAPIRequestContext(this._object, params);
     return {
-      request: _networkDispatchers.APIRequestContextDispatcher.from(this._scope, request)
+      request: _networkDispatchers.APIRequestContextDispatcher.from(this.parentScope(), request)
     };
   }
 
@@ -101,10 +101,7 @@ class SocksSupportDispatcher extends _dispatcher.Dispatcher {
     this._type_SocksSupport = true;
     this._socksProxy = socksProxy;
     socksProxy.on(_socksProxy.SocksProxy.Events.SocksRequested, payload => this._dispatchEvent('socksRequested', payload));
-    socksProxy.on(_socksProxy.SocksProxy.Events.SocksData, payload => this._dispatchEvent('socksData', {
-      uid: payload.uid,
-      data: payload.data.toString('base64')
-    }));
+    socksProxy.on(_socksProxy.SocksProxy.Events.SocksData, payload => this._dispatchEvent('socksData', payload));
     socksProxy.on(_socksProxy.SocksProxy.Events.SocksClosed, payload => this._dispatchEvent('socksClosed', payload));
   }
 
@@ -123,10 +120,7 @@ class SocksSupportDispatcher extends _dispatcher.Dispatcher {
   async socksData(params) {
     var _this$_socksProxy3;
 
-    (_this$_socksProxy3 = this._socksProxy) === null || _this$_socksProxy3 === void 0 ? void 0 : _this$_socksProxy3.sendSocketData({
-      uid: params.uid,
-      data: Buffer.from(params.data, 'base64')
-    });
+    (_this$_socksProxy3 = this._socksProxy) === null || _this$_socksProxy3 === void 0 ? void 0 : _this$_socksProxy3.sendSocketData(params);
   }
 
   async socksError(params) {

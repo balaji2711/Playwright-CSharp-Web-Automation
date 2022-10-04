@@ -40,7 +40,7 @@ class StreamDispatcher extends _dispatcher.Dispatcher {
   async read(params) {
     const stream = this._object.stream;
     if (this._ended) return {
-      binary: ''
+      binary: Buffer.from('')
     };
 
     if (!stream.readableLength) {
@@ -53,7 +53,7 @@ class StreamDispatcher extends _dispatcher.Dispatcher {
 
     const buffer = stream.read(Math.min(stream.readableLength, params.size || stream.readableLength));
     return {
-      binary: buffer ? buffer.toString('base64') : ''
+      binary: buffer || Buffer.from('')
     };
   }
 

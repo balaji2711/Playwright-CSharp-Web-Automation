@@ -52,7 +52,7 @@ class StreamImpl extends _stream.Readable {
     const result = await this._channel.read({
       size
     });
-    if (result.binary) this.push(Buffer.from(result.binary, 'base64'));else this.push(null);
+    if (result.binary.byteLength) this.push(result.binary);else this.push(null);
   }
 
   _destroy(error, callback) {

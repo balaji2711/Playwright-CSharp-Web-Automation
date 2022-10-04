@@ -89,7 +89,7 @@ class WebSocketTransport {
     }); // Prevent Error: read ECONNRESET.
 
 
-    this._ws.addEventListener('error', error => this._progress && this._progress.log(`<ws error> ${error}`));
+    this._ws.addEventListener('error', error => this._progress && this._progress.log(`<ws error> ${error.type} ${error.message}`));
   }
 
   send(message) {
